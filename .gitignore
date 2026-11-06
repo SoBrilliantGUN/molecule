@@ -1,0 +1,44 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ===== Node / 前端 =====
+node_modules/
+.vite/
+*.tsbuildinfo
+*.local
+
+# ===== 环境变量与密钥（红线：绝不提交）=====
+.env
+.env.*
+!.env.example
+config.json
+
+# ===== 数据库 / 本地数据 =====
+*.db
+*.sqlite
+*.sqlite3
+data/
+logs/
+*.log
+
+# ===== IDE / OS =====
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+*.docx

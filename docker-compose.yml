@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-atoms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-atoms}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atoms} -d ${POSTGRES_DB:-atoms}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build: ./app/backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-atoms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-atoms}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      LLM_MAIN_MODEL: ${LLM_MAIN_MODEL:-deepseek-ai/DeepSeek-V4-Flash}
+      LLM_VERIFY_MODEL: ${LLM_VERIFY_MODEL:-Qwen/Qwen3-Coder-480B-A35B-Instruct}
+      LLM_INTENT_MODEL: ${LLM_INTENT_MODEL:-deepseek-ai/DeepSeek-V4-Flash}
+      LLM_VISION_MODEL: ${LLM_VISION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./app/frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:
