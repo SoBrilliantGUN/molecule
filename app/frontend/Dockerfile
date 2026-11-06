@@ -4,11 +4,12 @@
 FROM node:24-alpine AS build
 WORKDIR /app
 
-RUN corepack enable
+# 国内镜像：pnpm/npm 拉依赖都走 npmmirror（corepack 下载 pnpm 独立二进制在 ECS 上会被墙）
+COPY .npmrc .npmrc
 
-# 先装依赖，利用缓存（pnpm-workspace.yaml 里已放行 esbuild/@swc/core 的构建脚本）
+# 用 npm 装 pnpm（走 .npmrc 的镜像），避开 corepack 下载独立二进制
 COPY package.json pnpm-workspace.yaml ./
-RUN corepack prepare pnpm@12.3.4 --activate && pnpm install
+RUN npm install -g pnpm@12.3.4 && pnpm install
 
 # 拷贝源码并构建
 COPY . .
