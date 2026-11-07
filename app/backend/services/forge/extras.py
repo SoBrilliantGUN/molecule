@@ -14,7 +14,7 @@ from services.forge.util import DomainError, dumps, extract_json, loads
 logger = logging.getLogger(__name__)
 
 RACE_MODELS = [m.strip() for m in os.environ.get("RACE_MODELS", "deepseek-ai/DeepSeek-V4-Flash,Qwen/Qwen3-235B-A22B-Instruct,zai-org/GLM-5.3").split(",") if m.strip()]
-VERIFY_MODEL = os.environ.get("LLM_VERIFY_MODEL", "Qwen/Qwen3-Coder-480B-A35B-Instruct")
+VERIFY_MODEL = os.environ.get("LLM_VERIFY_MODEL", "zai-org/GLM-5.3")
 
 SCORE_PROMPT = (
     "你是应用评审。对照需求，对下面的单文件 HTML 应用按三个维度打分（0–10 整数）："

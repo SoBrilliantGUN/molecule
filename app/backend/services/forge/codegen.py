@@ -6,11 +6,16 @@ persisted with localStorage so the generated app survives a refresh / reopening.
 """
 
 import logging
+import os
 import re
 
 from services.forge import gateway
 from services.forge.gateway import RunContext
 from services.forge.util import DomainError
+
+# 单文件 HTML 生成最长可能需要数分钟（8000 tokens），把超时做成可配置并给足余量。
+# 之前写死 240s，DeepSeek 生成稍慢就会被 asyncio.wait_for 掐断，导致任务失败、项目不落库。
+LLM_GENERATE_TIMEOUT = float(os.environ.get("LLM_GENERATE_TIMEOUT", "900"))
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +81,7 @@ def build_messages(requirement: str, current_html: str | None = None) -> list[di
 async def generate(ctx: RunContext, requirement: str, current_html: str | None = None, *, model: str | None = None) -> dict:
     """One LLM call → validated single-file HTML + title. Returns {"html", "title"}."""
     messages = build_messages(requirement, current_html)
-    result = await gateway.chat(ctx, messages, purpose="generate", model=model, max_tokens=8000, temperature=0.5, timeout=240)
+    result = await gateway.chat(ctx, messages, purpose="generate", model=model, max_tokens=8000, temperature=0.5, timeout=LLM_GENERATE_TIMEOUT)
     html = _strip_fence(result.content)
     _validate_html(html)
     title = _extract_title(html)

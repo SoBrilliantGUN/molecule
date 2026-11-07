@@ -74,6 +74,28 @@ export interface RunRow {
   input: string;
   usage: Partial<Usage>;
 }
+export interface RunStart {
+  run_key: string;
+  project_id: number | null;
+}
+// SSE stage/dag/verify events pushed by /runs/{key}/events
+export interface ForgeEvent {
+  type: string; // stage | dag | verify | done | error
+  data: {
+    index?: number;
+    total?: number;
+    text?: string;
+    stage?: string;
+    node?: string;
+    action?: string;
+    score?: number;
+    passed?: boolean;
+    missing?: string[];
+    project_id?: number;
+    name?: string;
+    message?: string;
+  };
+}
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 const LONG = 600_000;
@@ -127,4 +149,35 @@ export const forge = {
   startRace: (prompt: string) => call<Race>('POST', '/races', { prompt }, LONG),
   races: () => call<Race[]>('GET', '/races'),
   selectRace: (id: number, index: number) => call<Project>('POST', `/races/${id}/select/${index}`),
+
+  // async run + SSE
+  startRun: (body: { message: string; project_id?: number }) =>
+    call<RunStart>('POST', '/runs', body, 30_000),
+  streamRun: (runKey: string, onEvent: (e: ForgeEvent) => void, onDone: (data: ForgeEvent['data']) => void) => {
+    const es = new EventSource(`/api/v1/forge/runs/${runKey}/events`);
+    const types = ['stage', 'dag', 'verify', 'error'] as const;
+    types.forEach((t) => {
+      es.addEventListener(t, (ev: MessageEvent) => {
+        try {
+          const data = JSON.parse(ev.data as string) as ForgeEvent['data'];
+          onEvent({ type: t, data });
+        } catch {
+          /* ignore malformed frame */
+        }
+      });
+    });
+    es.addEventListener('done', (ev: MessageEvent) => {
+      try {
+        onDone(JSON.parse(ev.data as string) as ForgeEvent['data']);
+      } catch {
+        onDone({});
+      }
+      es.close();
+    });
+    es.onerror = () => {
+      // EventSource closes itself on stream end; don't spam on transient net blips
+      es.close();
+    };
+    return es;
+  },
 };

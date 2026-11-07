@@ -42,7 +42,14 @@ def _get_client() -> AsyncOpenAI:
         base_url = os.environ.get("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
         if not api_key:
             raise GatewayError("未配置 SILICONFLOW_API_KEY")
-        _siliconflow_client = AsyncOpenAI(api_key=api_key, base_url=base_url.rstrip("/"))
+        # 生成单文件 HTML 可能要几分钟。SDK 默认 600s 总超时会掐掉慢请求，
+        # 这里抬到 30 分钟给足余量；真正的超时约束由调用方 asyncio.wait_for 控制。
+        _siliconflow_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url.rstrip("/"),
+            timeout=1800.0,
+            max_retries=0,  # 网关自带重试，交给网关
+        )
     return _siliconflow_client
 
 
@@ -140,7 +147,7 @@ async def chat(
     model: str | None = None,
     temperature: float = 0.3,
     max_tokens: int = 4096,
-    timeout: float = 120.0,
+    timeout: float = 600.0,  # DeepSeek 长生成可能数分钟，默认给足；生成/规划调用常显式覆盖
     policy: RetryPolicy | None = None,
 ) -> LLMResult:
     model = model or DEFAULT_MODEL

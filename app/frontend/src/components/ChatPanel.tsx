@@ -38,20 +38,29 @@ export default function ChatPanel({ projectId, onChanged }: Props) {
   }, [projectId]);
   useEffect(() => bottom.current?.scrollIntoView({ block: 'end' }), [messages, busy]);
 
+  const [liveEvents, setLiveEvents] = useState<TraceEvent[]>([]);
+
   const send = async () => {
     const text = input.trim();
     if (!text || busy) return;
     setInput('');
     setBusy(true);
+    setLiveEvents([]);
     setMessages((m) => [...m, { id: Date.now(), role: 'user', content: text }]);
     try {
-      const out = await forge.chat(projectId, text);
-      setMessages((m) => [...m, { id: Date.now() + 1, role: 'assistant', content: out.reply, meta: { events: out.events, usage: out.usage, intent: out.intent ?? undefined, run_key: out.run_key } }]);
-      onChanged();
+      const { run_key } = await forge.startRun({ message: text, project_id: projectId });
+      forge.streamRun(
+        run_key,
+        (e) => setLiveEvents((ev) => [...ev, { kind: e.type, text: e.data.text ?? '' }]),
+        () => {
+          setMessages((m) => [...m, { id: Date.now() + 1, role: 'assistant', content: '已完成这一步。', meta: { intent: 'iterate' } }]);
+          onChanged();
+          setBusy(false);
+        }
+      );
     } catch (e) {
       toast.error('发送失败', { description: (e as Error).message });
       setMessages((m) => [...m, { id: Date.now() + 2, role: 'assistant', content: `⚠️ ${(e as Error).message}` }]);
-    } finally {
       setBusy(false);
     }
   };
@@ -72,10 +81,19 @@ export default function ChatPanel({ projectId, onChanged }: Props) {
             </div>
           </div>
         ))}
+        {liveEvents.length > 0 && (
+          <div className="space-y-1 border-l-2 border-ember pl-3">
+            {liveEvents.map((e, i) => (
+              <p key={i} className="font-mono-ui text-xs text-muted-foreground">
+                {e.text}
+              </p>
+            ))}
+          </div>
+        )}
         {busy && (
           <p className="flex items-center gap-2 border-l-2 border-ember pl-3 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Agent 正在思考并修改应用…
+            Agent 正在生成或修改应用…
           </p>
         )}
         <div ref={bottom} />

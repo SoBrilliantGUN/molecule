@@ -19,14 +19,24 @@ export default function Home() {
   };
   useEffect(reload, []);
 
+  const [progress, setProgress] = useState<string[]>([]);
+
   const create = async () => {
     setBusy(true);
+    setProgress([]);
     try {
-      const p = await forge.createProject({ prompt });
-      nav(`/project/${p.id}`);
+      const { run_key } = await forge.startRun({ message: prompt });
+      forge.streamRun(
+        run_key,
+        (e) => setProgress((p) => [...p, e.data.text ?? '']),
+        (data) => {
+          if (data.project_id != null) nav(`/project/${data.project_id}`);
+          else toast.error('生成完成但未拿到项目');
+          setBusy(false);
+        }
+      );
     } catch (e) {
       toast.error('创建失败', { description: (e as Error).message });
-    } finally {
       setBusy(false);
     }
   };
@@ -70,6 +80,16 @@ export default function Home() {
                 {!busy && <ArrowRight className="ml-1 h-4 w-4" />}
               </Button>
             </div>
+            {busy && progress.length > 0 && (
+              <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto border-t border-border pt-3">
+                {progress.map((t, i) => (
+                  <li key={i} className="font-mono-ui flex gap-2 text-xs text-muted-foreground">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-ember" />
+                    <span className="break-all">{t}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </section>
 

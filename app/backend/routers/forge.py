@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from models.agent_runs import AgentRuns
@@ -12,9 +12,9 @@ from models.chat_messages import ChatMessages
 from models.llm_calls import LlmCalls
 from models.projects import Projects
 from models.races import Races
-from services.forge import agent, extras, gateway, ops, repo
+from services.forge import agent, extras, gateway, ops, repo, run_manager
 from services.forge.breaker import breakers
-from services.forge.util import DomainError, loads
+from services.forge.util import DomainError, dumps, loads
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/forge", tags=["forge"])
@@ -52,6 +52,12 @@ class ChatBody(BaseModel):
 class RaceBody(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     models: Optional[list[str]] = None
+
+
+class RunBody(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    project_id: Optional[int] = None
+    model: Optional[str] = None
 
 
 # ---------- projects ----------
@@ -117,6 +123,27 @@ async def runtime_app(slug: str) -> HTMLResponse:
     if not project.get("published"):
         raise HTTPException(403, "该应用尚未发布")
     return HTMLResponse(project.get("html") or "<h1>空应用</h1>")
+
+
+# ---------- asynchronous run + SSE ----------
+
+@router.post("/runs")
+async def start_run(body: RunBody) -> dict:
+    """Start an async run (long DAG or short ReAct). Returns run_key immediately;
+    progress streams via GET /runs/{run_key}/events."""
+    import uuid
+
+    run_key = uuid.uuid4().hex[:16]
+    await repo.add(AgentRuns, run_key=run_key, project_id=body.project_id, status="running", user_input=body.message[:2000])
+    run_manager.start_run(run_key, agent.start_forge(run_key, body.message, body.project_id, body.model))
+    return {"run_key": run_key, "project_id": body.project_id}
+
+
+@router.get("/runs/{run_key}/events")
+async def run_events(run_key: str) -> StreamingResponse:
+    """SSE stream of stage/dag/verify/done/error events for a run."""
+    stream = await run_manager.make_sse_stream(run_key)
+    return StreamingResponse(stream, media_type="text/event-stream")
 
 
 # ---------- runs / usage / breakers ----------

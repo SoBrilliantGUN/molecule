@@ -19,5 +19,7 @@ class AgentRuns(Base):
     checkpoint_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     usage_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     result_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # SSE 事件持久化（run 产生的 stage/dag/verify/done 事件，供订阅端回放 + 断连续收）
+    events_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

@@ -122,15 +122,96 @@ async def _record_run(run_key: str, project_id: int | None, state: dict, ctx: Ru
 
 
 async def create_from_prompt(prompt: str, model: str | None = None) -> dict:
-    """New app: one-liner -> single-file HTML -> project."""
+    """New app: one-liner -> single-file HTML -> project. Kept as the synchronous
+    compat path (POST /projects); the streaming path goes through start_forge."""
     ctx = RunContext(run_key=uuid.uuid4().hex[:16], budget=Budget())
-    state: ForgeState = {"message": prompt, "project_id": None, "current_html": None, "events": [], "run_key": ctx.run_key}
-    graph = _build_graph().compile()
-    result = await graph.ainvoke(state, config={"configurable": {"ctx": ctx}})
-    await _record_run(ctx.run_key, None, result, ctx)
-    project = await ops.get_project(result["project_id"])
+    out = await _run_classified(ctx, _noop_emit, _noop_checkpoint, prompt, None, model)
+    project = await _persist_project(ctx, out, prompt, None)
+    return project
+
+
+def _noop_emit(_type: str, _data: dict) -> None:
+    """Discard events in the synchronous compat path."""
+    return None
+
+
+def _noop_checkpoint() -> None:
+    return None
+
+
+async def start_forge(run_key: str, prompt: str, project_id: int | None, model: str | None) -> dict:
+    """Background entry for a run: emits stage/dag/verify/done events bound to run_key.
+
+    Called by the router in an asyncio task; events flow to run_manager.emit so SSE
+    subscribers see progress live. Returns the final {project_id, status} on success.
+    """
+    from services.forge import run_manager
+    from services.forge.gateway import RunContext
+    from services.forge.budget import Budget
+
+    ctx = RunContext(run_key=run_key, project_id=project_id, budget=Budget())
+
+    async def emit(event_type: str, data: dict) -> None:
+        await run_manager.emit(run_key, event_type, data)
+
+    async def checkpoint() -> None:
+        try:
+            row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
+            if row:
+                await repo.update(AgentRuns, row[0]["id"], status="running")
+        except Exception as exc:  # noqa: BLE001 - checkpoint must not break the run
+            logger.warning("checkpoint failed for %s: %s", run_key, exc)
+
+    try:
+        await emit("stage", {"index": 0, "total": 0, "text": "接收需求，判定任务复杂度…"})
+        out = await _run_classified(ctx, emit, checkpoint, prompt, project_id, model)
+        project = await _persist_project(ctx, out, prompt, project_id)
+        row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
+        if row:
+            await repo.update(AgentRuns, row[0]["id"], status="done")
+        await emit("done", {"project_id": project["id"], "name": project["name"]})
+        return {"project_id": project["id"], "status": "done"}
+    except Exception as exc:  # noqa: BLE001 - surface error to the SSE stream
+        logger.error("forge run %s failed: %s", run_key, exc, exc_info=True)
+        row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
+        if row:
+            await repo.update(AgentRuns, row[0]["id"], status="error", result_json=dumps({"error": str(exc)[:500]}))
+        await emit("error", {"message": str(exc)})
+        return {"project_id": project_id, "status": "error", "error": str(exc)}
+
+
+async def _run_classified(ctx, emit, checkpoint, prompt: str, project_id: int | None, model: str | None) -> dict:
+    """Shared decision core: classify long/short, then route to DAG or ReAct.
+
+    Returns {html, title, verify} — the generated single-file app.
+    """
+    from services.forge import router
+    from services.forge.forge_dag import run_stages
+    from services.forge.forge_react import generate_verified
+
+    route = await router.classify(ctx, prompt, has_project=project_id is not None)
+    await emit("stage", {"index": 0, "total": 0, "text": "复杂度判定：长任务（DAG 分阶段）" if route == "long" else "复杂度判定：短任务（单次生成+校验）"})
+    if route == "long":
+        return await run_stages(ctx, emit, checkpoint, prompt)
+    # short: ReAct single generate with triple-check
+    current = None
+    if project_id is not None:
+        project = await ops.get_project(project_id)
+        current = project.get("html") if project else None
+    return await generate_verified(ctx, prompt, current, model=model, emit=emit)
+
+
+async def _persist_project(ctx: RunContext, out: dict, prompt: str, project_id: int | None) -> dict:
+    """Persist the final HTML into a project (+ chat messages). project_id None -> create new."""
+    html = out["html"]
+    title = out.get("title") or prompt[:40]
+    if project_id is not None:
+        project = await ops.update_project_html(project_id, html, title)
+    else:
+        project = await ops.create_project(title, html, description=prompt[:200])
     await repo.add(ChatMessages, project_id=project["id"], role="user", content=prompt)
-    await repo.add(ChatMessages, project_id=project["id"], role="assistant", content=result.get("reply", ""), meta_json=dumps({"usage": ctx.budget.snapshot(), "run_key": ctx.run_key}))
+    meta = {"usage": ctx.budget.snapshot(), "verify": out.get("verify", {})}
+    await repo.add(ChatMessages, project_id=project["id"], role="assistant", content=f"已生成「{project['name']}」。", meta_json=dumps(meta))
     return project
 
 
