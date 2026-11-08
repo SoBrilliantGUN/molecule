@@ -52,28 +52,6 @@ export interface Race {
   project_id: number | null;
   results: { items: RaceItem[]; recommended: number };
 }
-export interface UsageSummary {
-  calls: number;
-  tokens: number;
-  cost_cny: number;
-  errors: number;
-  by_model: { model: string; calls: number; cost_cny: number }[];
-  recent: { purpose: string; model: string; tokens: number; cost_cny: number; latency_ms: number; status: string; error: string | null }[];
-}
-export interface BreakerRow {
-  key: string;
-  state: string;
-  failures: number;
-  open_for_s: number;
-}
-export interface RunRow {
-  run_key: string;
-  project_id: number | null;
-  intent: string | null;
-  status: string;
-  input: string;
-  usage: Partial<Usage>;
-}
 export interface RunStart {
   run_key: string;
   project_id: number | null;
@@ -140,11 +118,6 @@ export const forge = {
   messages: (id: number) => call<ChatMessage[]>('GET', `/projects/${id}/messages`),
   chat: (id: number, message: string) => call<ChatResult>('POST', `/projects/${id}/chat`, { message }, LONG),
   publish: (id: number, published: boolean) => call<Project>('POST', `/projects/${id}/publish?published=${published}`),
-
-  usage: () => call<UsageSummary>('GET', '/usage'),
-  breakers: () => call<BreakerRow[]>('GET', '/breakers'),
-  resetBreakers: () => call<{ ok: boolean }>('POST', '/breakers/reset'),
-  runs: () => call<RunRow[]>('GET', '/runs'),
 
   startRace: (prompt: string) => call<Race>('POST', '/races', { prompt }, LONG),
   races: () => call<Race[]>('GET', '/races'),
