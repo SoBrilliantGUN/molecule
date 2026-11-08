@@ -118,6 +118,24 @@ async def get_project(project_id: int) -> dict:
     }
 
 
+@router.post("/projects/{project_id}/publish")
+async def publish_project(project_id: int) -> dict:
+    """发布：标记为已发布并返回 slug，前端据此拼出公开分享链接 /view/{slug}。"""
+    try:
+        return _project_row(await ops.publish_project(project_id))
+    except DomainError as exc:
+        raise _err(exc) from exc
+
+
+@router.get("/pub/{slug}")
+async def public_project(slug: str) -> dict:
+    """公开分享视图：按 slug 返回应用（单用户 demo 本就无鉴权，直接可访问）。"""
+    try:
+        return _project_row(await ops.get_project(slug))
+    except DomainError as exc:
+        raise _err(exc) from exc
+
+
 @router.delete("/projects/{project_id}")
 async def delete_project(project_id: int) -> dict:
     await ops.get_project(project_id)

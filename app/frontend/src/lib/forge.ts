@@ -115,6 +115,19 @@ export function errorMessage(e: unknown): string {
   return err?.message || '请求失败';
 }
 
+/** 把单文件 HTML 下载为 .html 文件（对应「导出」：存成 .html 双击即可打开）。 */
+export function downloadHtml(html: string, filename: string): void {
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function call<T>(method: Method, url: string, data?: unknown, timeout = 60_000): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -148,6 +161,8 @@ export const forge = {
   project: (id: number) => call<Project>('GET', `/projects/${id}`),
   createProject: (body: { prompt?: string }) => call<Project>('POST', '/projects', body, LONG),
   deleteProject: (id: number) => call<{ ok: boolean }>('DELETE', `/projects/${id}`),
+  publish: (id: number) => call<Project>('POST', `/projects/${id}/publish`, {}, 30_000),
+  pubProject: (slug: string) => call<Project>('GET', `/pub/${slug}`),
   messages: (id: number) => call<ChatMessage[]>('GET', `/projects/${id}/messages`),
   chat: (id: number, message: string) => call<ChatResult>('POST', `/projects/${id}/chat`, { message }, LONG),
 

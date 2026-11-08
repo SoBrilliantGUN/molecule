@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronLeft, Loader2 } from 'lucide-react';
+import { ChevronLeft, Download, Loader2, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppRuntime from '@/components/AppRuntime';
 import ChatPanel from '@/components/ChatPanel';
-import { forge, type Project } from '@/lib/forge';
+import { downloadHtml, forge, type Project } from '@/lib/forge';
 
 /** 生成中的进度视图：流式展示后端 push 的阶段/核验事件，避免用户以为卡住。 */
 function GeneratingProgress({ events }: { events: string[] }) {
@@ -75,6 +75,29 @@ export default function ProjectPage() {
       .catch((e) => toast.error((e as Error).message));
   };
 
+  const exportHtml = () => {
+    if (!project.html) return;
+    downloadHtml(project.html, `${(project.name || '应用').replace(/[\\/:*?"<>|]/g, '')}.html`);
+    toast.success('已导出 HTML 文件');
+  };
+
+  const share = async () => {
+    if (!project.html) return;
+    try {
+      const p = await forge.publish(projectId);
+      if (!p.slug) throw new Error('发布失败，缺少链接标识');
+      const url = `${window.location.origin}/view/${p.slug}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.success('分享链接已复制', { description: url });
+      } catch {
+        toast.success('分享链接已生成', { description: url });
+      }
+    } catch (e) {
+      toast.error('分享失败', { description: (e as Error).message });
+    }
+  };
+
   return (
     <div className="flex h-[calc(100vh-56px)] flex-col">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
@@ -83,10 +106,28 @@ export default function ProjectPage() {
           <h1 className="font-display text-lg font-semibold">{project.name}</h1>
           {project.generating && <span className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-600"><Loader2 className="h-3 w-3 animate-spin" />生成中</span>}
         </div>
-        <div className="flex border border-border md:hidden">
-          {(['chat', 'stage'] as const).map((p) => (
-            <button key={p} onClick={() => setPane(p)} className={`min-h-[40px] px-3 text-sm ${pane === p ? 'bg-primary text-primary-foreground' : ''}`}>{p === 'chat' ? '对话' : '应用'}</button>
-          ))}
+        <div className="flex items-center gap-2">
+          {project.html && (
+            <>
+              <button
+                onClick={exportHtml}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm font-semibold text-muted-foreground hover:border-primary hover:text-primary"
+              >
+                <Download className="h-4 w-4" /> 导出
+              </button>
+              <button
+                onClick={share}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+              >
+                <Share2 className="h-4 w-4" /> 分享
+              </button>
+            </>
+          )}
+          <div className="flex border border-border md:hidden">
+            {(['chat', 'stage'] as const).map((p) => (
+              <button key={p} onClick={() => setPane(p)} className={`min-h-[40px] px-3 text-sm ${pane === p ? 'bg-primary text-primary-foreground' : ''}`}>{p === 'chat' ? '对话' : '应用'}</button>
+            ))}
+          </div>
         </div>
       </header>
       <div className="grid min-h-0 flex-1 md:grid-cols-[380px_1fr]">

@@ -37,3 +37,12 @@ async def update_project_html(project_id: int, html: str, name: str = "") -> dic
         fields["name"] = name[:40]
     await repo.update(Projects, project_id, **fields)
     return await get_project(project_id)
+
+
+async def publish_project(project_id: int) -> dict:
+    """Mark a project as published so it can be shared via its public slug URL."""
+    project = await get_project(project_id)
+    if not project.get("html"):
+        raise DomainError("应用还没有生成内容，暂不能发布")
+    await repo.update(Projects, project_id, published=True)
+    return await get_project(project_id)

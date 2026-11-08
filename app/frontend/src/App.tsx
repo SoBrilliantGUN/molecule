@@ -7,6 +7,7 @@ import Shell from './components/Shell';
 import Home from './pages/Home';
 import ProjectPage from './pages/ProjectPage';
 import CreatePage from './pages/CreatePage';
+import ViewPage from './pages/ViewPage';
 
 const queryClient = new QueryClient();
 
@@ -42,6 +43,7 @@ const AppRoutes = () => (
     <Route path="/" element={<WithShell><Home /></WithShell>} />
     <Route path="/create" element={<WithShell><CreatePage /></WithShell>} />
     <Route path="/project/:id" element={<WithShell><ProjectPage /></WithShell>} />
+    <Route path="/view/:slug" element={<ViewPage />} />
   </Routes>
 );
 
