@@ -10,7 +10,8 @@ Guards (all deterministic, program-side):
   verifies each verify_item → ③ program scores; below VERIFY_PASS_SCORE the stage is sent back.
 - Node failure → mark failed node + downstream obsolete → replan replacements → merge → re-validate.
 
-Every node completion writes a checkpoint to AgentRuns.checkpoint_json (crash-resume).
+Every node completion writes the accumulated HTML to AgentRuns.checkpoint_json, so a
+crash doesn't lose completed fragments (full DAG-state auto-resume is not wired yet).
 All LLM calls go through gateway.chat (budget / breaker / accounting preserved).
 """
 
@@ -70,9 +71,24 @@ class DagNode:
         return {
             "id": self.id, "action": self.action, "prompt": self.prompt,
             "depends_on": list(self.depends_on), "checks": self.checks,
-            "status": self.status, "has_output": bool(self.output),
+            "status": self.status, "output": self.output,
             "error": self.error, "replaces": self.replaces,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "DagNode":
+        """Rebuild a node from its serialized form (used by crash-resume)."""
+        return cls(
+            id=d["id"],
+            action=d.get("action", "structure"),
+            prompt=d.get("prompt", ""),
+            depends_on=tuple(d.get("depends_on") or []),
+            checks=[str(c) for c in (d.get("checks") or [])],
+            status=d.get("status", NodeStatus.PENDING),
+            output=d.get("output", ""),
+            error=d.get("error"),
+            replaces=d.get("replaces"),
+        )
 
 
 class Dag:
@@ -153,6 +169,11 @@ class Dag:
 
     def to_dict(self) -> dict:
         return {"nodes": [n.to_dict() for n in self.nodes]}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Dag":
+        """Rebuild a DAG (with node statuses/outputs) from its serialized form."""
+        return cls([DagNode.from_dict(n) for n in (d.get("nodes") or [])])
 
 
 # ======================================================================
@@ -359,18 +380,27 @@ NODE_SYSTEM = (
 )
 
 
-async def _run_node(ctx: RunContext, dag: Dag, node: DagNode, requirement: str, current: str) -> str:
-    """Execute one node → its HTML segment (spliced into `current`). Raises on hard failure."""
+async def _run_node(ctx: RunContext, dag: Dag, node: DagNode, requirement: str, current: str, siblings: tuple[DagNode, ...] = ()) -> str:
+    """Execute one node → its HTML segment (spliced into `current`). Raises on hard failure.
+
+    `siblings` are the other nodes running concurrently this round; naming them here
+    keeps the model from emitting overlapping/duplicate fragments for the same action.
+    """
     upstream = []
     for dep_id in node.depends_on:
         dep = dag.get(dep_id)
         if dep is not None and dep.output:
             upstream.append(f"[{dep.id}:{dep.action}] {dep.output[:1200]}")
+    sibling_note = ""
+    if siblings:
+        names = "、".join(f"{s.id}({s.action})" for s in siblings)
+        sibling_note = f"\n本轮并行生成的其他节点：{names}。它们各负责自己的片段，你只负责本节点任务，不要生成与它们重叠或重复的内容。"
     user = (
         f"整体需求：{requirement}\n"
         f"当前节点：{node.id}（动作：{node.action}）\n"
         f"本节点任务：{node.prompt}\n"
         + (f"依赖节点已产出的片段：\n" + "\n".join(upstream) if upstream else "")
+        + sibling_note
         + (f"\n\n当前累计 HTML（此前阶段已完成部分）：\n{current[-3000:]}" if current else "")
         + "\n产出本节点 HTML 片段，只输出片段本身。"
     )
@@ -555,7 +585,7 @@ REPLAN_SYSTEM = (
 )
 
 
-async def replan_dag(ctx: RunContext, dag: Dag, failed: DagNode, error: str, requirement: str, retry: int) -> Dag | None:
+async def replan_dag(ctx: RunContext, dag: Dag, failed: DagNode, error: str, requirement: str) -> Dag | None:
     """Replan replacements for the failed node + its still-needed downstream. Returns a merged Dag."""
     existing_desc = "\n".join(
         f"- {n.id} ({n.action}) [{n.status}] 依赖={list(n.depends_on)}"
@@ -610,20 +640,44 @@ async def replan_dag(ctx: RunContext, dag: Dag, failed: DagNode, error: str, req
 # ======================================================================
 
 
-async def _run_scalar(ctx: RunContext, emit, checkpoint, stages: list[dict], requirement: str) -> dict:
-    """Execute all stages in a scalar loop. Emits stage/dag/verify events via `emit`."""
-    current = ""
+def _snapshot(stages: list[dict], stage_idx: int, current: str, dag: Dag | None, requirement: str) -> dict:
+    """A consistent resume snapshot: dag node statuses and the accumulated HTML agree.
+
+    `stage_idx` is the stage currently being executed (0-based); `dag` is that stage's
+    DAG (with node statuses/outputs), or None before a stage's DAG is planned.
+    """
+    return {
+        "requirement": requirement,
+        "stages": stages,
+        "stage_idx": stage_idx,
+        "current": current,
+        "dag": dag.to_dict() if dag is not None else None,
+    }
+
+
+async def _run_scalar(ctx: RunContext, emit, checkpoint, stages: list[dict], requirement: str, current: str = "", start_idx: int = 0, resume_dag: Dag | None = None) -> dict:
+    """Execute all stages in a scalar loop. Emits stage/dag/verify events via `emit`.
+
+    `current` / `start_idx` / `resume_dag` are only non-default on crash-resume: continue
+    from the accumulated HTML at `start_idx`, re-using `resume_dag` (already-partially-run)
+    instead of re-planning that stage — never re-do completed nodes.
+    """
     total = len(stages)
-    for idx, stage in enumerate(stages, start=1):
-        stage_name = stage.get("stage", f"阶段{idx}")
-        await emit("stage", {"index": idx, "total": total, "text": f"阶段 {idx}/{total}：{stage_name}", "stage": stage_name})
-        dag = await plan_dag(ctx, stage, requirement)
-        if dag is None:
-            # DAG planning exhausted: fall back to a single full HTML generation for this stage
-            await emit("dag", {"node": "fallback", "text": f"{stage_name}：DAG 规划失败，改整体生成"})
-            current = await _stage_fallback(ctx, stage, requirement, current)
-            continue
-        current = await _execute_dag(ctx, emit, checkpoint, dag, stage, requirement, current)
+    for idx in range(start_idx, total):
+        stage = stages[idx]
+        stage_no = idx + 1
+        stage_name = stage.get("stage", f"阶段{stage_no}")
+        await emit("stage", {"index": stage_no, "total": total, "text": f"阶段 {stage_no}/{total}：{stage_name}", "stage": stage_name})
+        if idx == start_idx and resume_dag is not None:
+            dag = resume_dag
+        else:
+            dag = await plan_dag(ctx, stage, requirement)
+            if dag is None:
+                # DAG planning exhausted: fall back to a single full HTML generation for this stage
+                await emit("dag", {"node": "fallback", "text": f"{stage_name}：DAG 规划失败，改整体生成"})
+                current = await _stage_fallback(ctx, stage, requirement, current)
+                continue
+        current = await _execute_dag(ctx, emit, checkpoint, dag, stage, requirement, current, stages=stages, stage_idx=idx)
         # stage triple-check
         violations = side_effect_checks(current)
         if violations:
@@ -635,7 +689,7 @@ async def _run_scalar(ctx: RunContext, emit, checkpoint, stages: list[dict], req
         v = await verify_html(ctx, stage.get("verify_items") or [], current)
         await emit("verify", {"text": f"核验分 {v['score']:.2f}" + (f"，缺失：{'；'.join(v['missing'][:3])}" if v["missing"] else "，全部通过"), "score": v["score"], "passed": v["score"] >= VERIFY_PASS_SCORE, "missing": v["missing"]})
         if v["score"] < VERIFY_PASS_SCORE:
-            await emit("stage", {"index": idx, "total": total, "text": f"分数不足 {VERIFY_PASS_SCORE}，在阶段内补缺失节点"})
+            await emit("stage", {"index": stage_no, "total": total, "text": f"分数不足 {VERIFY_PASS_SCORE}，在阶段内补缺失节点"})
             # 打回 = 在本阶段 DAG 内追加/替换“针对缺失项”的补充节点，保留已完成产出继续跑，
             # 绝不从头重生成整个应用。
             current, dag = await _patch_missing(ctx, emit, dag, stage, requirement, current, v["missing"])
@@ -648,37 +702,61 @@ async def _run_scalar(ctx: RunContext, emit, checkpoint, stages: list[dict], req
 # --- per-stage DAG executor ---
 
 
-async def _execute_dag(ctx: RunContext, emit, checkpoint, dag: Dag, stage: dict, requirement: str, current: str) -> str:
+async def _execute_dag(ctx: RunContext, emit, checkpoint, dag: Dag, stage: dict, requirement: str, current: str, *, stages: list[dict], stage_idx: int) -> str:
+    """Execute a stage's DAG with parallelism: each round runs *all* dependency-free
+    (ready) nodes concurrently (kima's Send fan-out), then splices their segments in
+    node order. Failed nodes trigger replan of only that node + its downstream, then
+    continue from the completed portion — never restart from scratch.
+
+    Checkpoints a consistent (dag, current) snapshot at the top of every round, so a
+    crash resumes from the last completed node — not from scratch.
+    """
     while True:
-        done = True
-        for node in dag.nodes:
-            if node.status in (NodeStatus.COMPLETED, NodeStatus.FAILED, NodeStatus.OBSOLETE):
-                continue
-            done = False
-            ready = dag.ready()
-            if not any(n.id == node.id for n in ready):
-                continue
+        await checkpoint(_snapshot(stages, stage_idx, current, dag, requirement))
+        ready = dag.ready()
+        not_done = [n for n in dag.nodes if n.status not in (NodeStatus.COMPLETED, NodeStatus.FAILED, NodeStatus.OBSOLETE)]
+        if not ready and not not_done:
+            break  # all terminal
+        if not ready:
+            # no ready node yet (e.g. waiting on a replan whose deps aren't complete);
+            # if nothing is left to run but some are still PENDING, guard against livelock
+            if all(n.status in (NodeStatus.PENDING,) for n in not_done) and not ready:
+                await emit("error", {"text": "DAG 依赖无法解锁（可能成环），跳过本阶段"})
+                return current
+            continue
+
+        # 并行执行本轮全部 ready 节点
+        async def _run_one(node: DagNode, base: str) -> tuple[DagNode, str | None]:
             node.status = NodeStatus.RUNNING
             await emit("dag", {"node": node.id, "action": node.action, "text": f"执行节点 {node.id}（{node.action}）"})
+            siblings = tuple(n for n in ready if n.id != node.id)
             try:
-                segment = await _run_node(ctx, dag, node, requirement, current)
+                segment = await _run_node(ctx, dag, node, requirement, base, siblings=siblings)
                 node.status = NodeStatus.COMPLETED
                 node.output = segment
-                current = _splice(current, node, segment)
-                await checkpoint()
-            except Exception as exc:  # noqa: BLE001 - node failure → replan
+                return node, segment
+            except Exception as exc:  # noqa: BLE001
                 node.status = NodeStatus.FAILED
                 node.error = str(exc)
-                await emit("error", {"text": f"节点 {node.id} 失败，废弃下游并重规划"})
-                obsolete = dag.mark_downstream_obsolete(node.id)
-                merged = await replan_dag(ctx, dag, node, str(exc), requirement, len(obsolete))
-                if merged is None:
-                    await emit("dag", {"node": "replan-failed", "text": "重规划失败，跳过本阶段"})
-                    return current
-                await emit("dag", {"node": "replan", "text": f"重规划合入替换节点（{len([n for n in merged.nodes if n.replaces])} 个）"})
-                dag = merged
-        if done:
-            break
+                return node, None
+
+        results = await asyncio.gather(*(_run_one(n, current) for n in ready))
+
+        # 串行拼接（按本轮 ready 的原顺序），失败节点单独 replan
+        for node, segment in results:
+            if segment is not None:
+                current = _splice(current, node, segment)
+        failures = [n for n, _seg in results if _seg is None]
+
+        for node in failures:
+            await emit("error", {"text": f"节点 {node.id} 失败，废弃下游并重规划"})
+            dag.mark_downstream_obsolete(node.id)
+            merged = await replan_dag(ctx, dag, node, node.error or "unknown", requirement)
+            if merged is None:
+                await emit("dag", {"node": "replan-failed", "text": "重规划失败，跳过本阶段"})
+                return current
+            await emit("dag", {"node": "replan", "text": f"重规划合入替换节点（{len([n for n in merged.nodes if n.replaces])} 个）"})
+            dag = merged
     return current
 
 
@@ -795,7 +873,7 @@ async def _patch_stage(
 # (all executor functions take ctx explicitly; no global binding — concurrent runs are safe)
 
 
-async def run_stages(ctx: RunContext, emit: Callable[..., Any], checkpoint: Callable[[], Any], requirement: str) -> dict:
+async def run_stages(ctx: RunContext, emit: Callable[..., Any], checkpoint: Callable[..., Any], requirement: str) -> dict:
     """Public entry: plan stages → scalar × DAG execution → triple-verified full HTML.
 
     ``ctx`` / ``emit`` / ``checkpoint`` are passed down explicitly (no globals), so multiple
@@ -805,4 +883,23 @@ async def run_stages(ctx: RunContext, emit: Callable[..., Any], checkpoint: Call
     await emit("stage", {"index": 0, "total": 0, "text": "正在拆解需求为阶段…"})
     stages = await plan_stages(ctx, requirement)
     await emit("stage", {"index": 0, "total": len(stages), "text": f"已拆解为 {len(stages)} 个阶段"})
+    # checkpoint the plan immediately, so a crash before the first node still resumes
+    # from this stage list (instead of re-planning from scratch).
+    await checkpoint(_snapshot(stages, 0, "", None, requirement))
     return await _run_scalar(ctx, emit, checkpoint, stages, requirement)
+
+
+async def run_stages_resume(ctx: RunContext, emit: Callable[..., Any], checkpoint: Callable[..., Any], requirement: str, state: dict) -> dict:
+    """Resume a long DAG run from a saved checkpoint — never restart completed stages/nodes.
+
+    Reconstructs the accumulated HTML + the partially-run current-stage DAG from `state`,
+    then continues from `stage_idx`. Falls back to a fresh run if `state` has no stages.
+    """
+    stages = state.get("stages") or []
+    if not stages:
+        return await run_stages(ctx, emit, checkpoint, requirement)
+    current = state.get("current") or ""
+    stage_idx = max(0, int(state.get("stage_idx") or 0))
+    resume_dag = Dag.from_dict(state["dag"]) if state.get("dag") else None
+    await emit("stage", {"index": 0, "total": len(stages), "text": f"断点续跑：从阶段 {stage_idx + 1}/{len(stages)} 继续"})
+    return await _run_scalar(ctx, emit, checkpoint, stages, requirement, current=current, start_idx=stage_idx, resume_dag=resume_dag)

@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import Shell from './components/Shell';
 import Home from './pages/Home';
 import ProjectPage from './pages/ProjectPage';
-import RacePage from './pages/RacePage';
+import CreatePage from './pages/CreatePage';
 import PublicApp from './pages/PublicApp';
 
 const queryClient = new QueryClient();
@@ -16,8 +16,8 @@ const WithShell = ({ children }: { children: ReactNode }) => <Shell>{children}</
 const AppRoutes = () => (
   <Routes>
     <Route path="/" element={<WithShell><Home /></WithShell>} />
+    <Route path="/create" element={<WithShell><CreatePage /></WithShell>} />
     <Route path="/project/:id" element={<WithShell><ProjectPage /></WithShell>} />
-    <Route path="/race" element={<WithShell><RacePage /></WithShell>} />
     <Route path="/app/:slug" element={<PublicApp />} />
   </Routes>
 );

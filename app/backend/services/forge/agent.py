@@ -20,7 +20,7 @@ from models.chat_messages import ChatMessages
 from services.forge import codegen, gateway, ops, repo
 from services.forge.budget import Budget, BudgetExceeded
 from services.forge.gateway import GatewayError, RunContext
-from services.forge.util import DomainError, dumps, extract_json
+from services.forge.util import DomainError, dumps, extract_json, loads
 
 logger = logging.getLogger(__name__)
 
@@ -130,41 +130,72 @@ async def create_from_prompt(prompt: str, model: str | None = None) -> dict:
     return project
 
 
-def _noop_emit(_type: str, _data: dict) -> None:
+async def _noop_emit(_type: str, _data: dict) -> None:
     """Discard events in the synchronous compat path."""
     return None
 
 
-def _noop_checkpoint() -> None:
+async def _noop_checkpoint(_state: dict | None = None) -> None:
     return None
 
 
 async def start_forge(run_key: str, prompt: str, project_id: int | None, model: str | None) -> dict:
-    """Background entry for a run: emits stage/dag/verify/done events bound to run_key.
+    """Background entry for a fresh run: emits stage/dag/verify/done events bound to run_key.
 
     Called by the router in an asyncio task; events flow to run_manager.emit so SSE
     subscribers see progress live. Returns the final {project_id, status} on success.
     """
+    return await _run_forge(run_key, prompt, project_id, model, resume_state=None)
+
+
+async def resume_forge(run_key: str) -> dict:
+    """Resume an interrupted run (status="running" after a crash) from its checkpoint.
+
+    Reads the saved checkpoint_json; if it holds a long-run stage plan, resumes from the
+    last completed node. Otherwise re-runs fresh (short tasks / crash before first node).
+    """
+    rows = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
+    row = rows[0] if rows else None
+    if not row:
+        return {"run_key": run_key, "status": "error", "error": "run not found"}
+    project_id = row.get("project_id")
+    resume_state = loads(row.get("checkpoint_json"), None) or {}
+    # Prefer the full requirement stored in the checkpoint (user_input is truncated to 2000).
+    prompt = resume_state.get("requirement") or row.get("user_input") or ""
+    return await _run_forge(run_key, prompt, project_id, None, resume_state)
+
+
+async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: str | None, resume_state: dict | None) -> dict:
+    """Shared background run core (fresh or resume): emits events bound to run_key.
+
+    Called by the router in an asyncio task; events flow to run_manager.emit so SSE
+    subscribers see progress live. Returns the final {project_id, status}.
+    """
     from services.forge import run_manager
     from services.forge.gateway import RunContext
     from services.forge.budget import Budget
+    from services.forge.forge_dag import run_stages_resume
 
     ctx = RunContext(run_key=run_key, project_id=project_id, budget=Budget())
 
     async def emit(event_type: str, data: dict) -> None:
         await run_manager.emit(run_key, event_type, data)
 
-    async def checkpoint() -> None:
+    async def checkpoint(state: dict) -> None:
         try:
             row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
             if row:
-                await repo.update(AgentRuns, row[0]["id"], status="running")
+                await repo.update(AgentRuns, row[0]["id"], status="running", checkpoint_json=dumps(state))
         except Exception as exc:  # noqa: BLE001 - checkpoint must not break the run
             logger.warning("checkpoint failed for %s: %s", run_key, exc)
 
     try:
-        await emit("stage", {"index": 0, "total": 0, "text": "接收需求，判定任务复杂度…"})
-        out = await _run_classified(ctx, emit, checkpoint, prompt, project_id, model)
+        if resume_state and resume_state.get("stages"):
+            await emit("stage", {"index": 0, "total": 0, "text": "检测到未完成的长任务，从断点续跑…"})
+            out = await run_stages_resume(ctx, emit, checkpoint, prompt, resume_state)
+        else:
+            await emit("stage", {"index": 0, "total": 0, "text": "接收需求，判定任务复杂度…"})
+            out = await _run_classified(ctx, emit, checkpoint, prompt, project_id, model)
         project = await _persist_project(ctx, out, prompt, project_id)
         row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
         if row:

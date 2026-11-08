@@ -4,6 +4,7 @@ from typing import Any, Type
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
+from sqlalchemy import text as sa_text
 
 from core.database import db_manager
 
@@ -66,3 +67,22 @@ async def remove(model: Type, *where: Any) -> int:
         result = await s.execute(sa_delete(model).where(*where))
         await s.commit()
         return result.rowcount or 0
+
+
+async def append_events_json(run_key: str, payload_json: str) -> None:
+    """Atomically append a JSON array to AgentRuns.events_json via a single UPDATE.
+
+    Uses PostgreSQL jsonb concatenation so concurrent emitters (parallel DAG nodes)
+    can't lose events to a read-modify-write race. ``payload_json`` must be a JSON
+    array, e.g. ``[{"type": "dag", "data": {...}}]``.
+    """
+    async with session() as s:
+        await s.execute(
+            sa_text(
+                "UPDATE agent_runs "
+                "SET events_json = (COALESCE(events_json, '[]')::jsonb || CAST(:payload AS jsonb))::text "
+                "WHERE run_key = :run_key"
+            ),
+            {"payload": payload_json, "run_key": run_key},
+        )
+        await s.commit()

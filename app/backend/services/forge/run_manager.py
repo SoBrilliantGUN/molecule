@@ -46,11 +46,7 @@ async def emit(run_key: str, event_type: str, data: dict) -> None:
     Callable from the background task; never raises (observability must not break a run).
     """
     try:
-        row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
-        if row:
-            existing = loads(row[0].get("events_json"), [])
-            existing.append({"type": event_type, "data": data})
-            await repo.update(AgentRuns, row[0]["id"], events_json=dumps(existing))
+        await repo.append_events_json(run_key, dumps([{"type": event_type, "data": data}]))
     except Exception as exc:  # noqa: BLE001 - persistence must not break the run
         logger.warning("persist event %s for %s failed: %s", event_type, run_key, exc)
 
@@ -140,3 +136,25 @@ async def fetch_recent(run_key: str) -> dict | None:
     """Return the AgentRuns row dict for a run (for status polling fallback)."""
     rows = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
     return rows[0] if rows else None
+
+
+async def resume_interrupted_runs() -> int:
+    """Requeue runs left in ``running`` after a crash (process restart).
+
+    Called once at app startup: any row still marked ``running`` was interrupted mid-run,
+    so we re-register its task via agent.resume_forge, which continues from checkpoint_json
+    if a long-run plan is present, or re-runs fresh otherwise. Returns the resumed count.
+    """
+    from services.forge import agent
+
+    rows = await repo.find(AgentRuns, AgentRuns.status == "running", limit=200)
+    resumed = 0
+    for r in rows:
+        run_key = r.get("run_key")
+        if not run_key or run_key in _live:
+            continue
+        start_run(run_key, agent.resume_forge(run_key))
+        resumed += 1
+    if resumed:
+        logger.info("resumed %d interrupted run(s)", resumed)
+    return resumed

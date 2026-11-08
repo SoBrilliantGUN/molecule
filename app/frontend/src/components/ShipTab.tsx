@@ -47,7 +47,7 @@ export default function ShipTab({ project, onChanged }: { project: Project; onCh
             {project.published ? '取消发布' : '一键发布'}
           </Button>
           {project.published && (
-            <a href={publicUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono-ui text-xs text-ember underline">
+            <a href={publicUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono-ui text-xs text-primary underline">
               {publicUrl}<ExternalLink className="h-3 w-3" />
             </a>
           )}

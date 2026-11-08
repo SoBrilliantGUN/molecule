@@ -33,16 +33,30 @@ export interface ChatResult {
   events: TraceEvent[];
   usage: Usage;
 }
+export interface SpecField {
+  name: string;
+  type: string;
+}
+export interface SpecQuestion {
+  key: string;
+  question: string;
+  type: 'select' | 'text';
+  options: string[];
+  default: string;
+}
+export interface SpecResult {
+  needs_clarify: boolean;
+  title: string;
+  fields: SpecField[];
+  view: string;
+  confidence: number;
+  questions: SpecQuestion[];
+}
 export interface RaceItem {
   model: string;
   ok: boolean;
   title?: string;
   html?: string;
-  score?: { quality: number; security: number; ux: number };
-  total: number;
-  issues?: string[];
-  cost_cny: number;
-  tokens: number;
   error?: string;
 }
 export interface Race {
@@ -50,7 +64,21 @@ export interface Race {
   prompt: string;
   selected_index: number | null;
   project_id: number | null;
-  results: { items: RaceItem[]; recommended: number };
+  results: { items: RaceItem[] };
+}
+export interface RaceStart {
+  id: number;
+  run_key: string;
+  prompt: string;
+  status: string;
+  models: string[];
+}
+export interface RaceModelEvent {
+  model: string;
+  status: 'running' | 'done' | 'error';
+  text?: string;
+  title?: string;
+  html?: string;
 }
 export interface RunStart {
   run_key: string;
@@ -112,6 +140,7 @@ async function call<T>(method: Method, url: string, data?: unknown, timeout = 60
 
 export const forge = {
   projects: () => call<Project[]>('GET', '/projects'),
+  spec: (prompt: string) => call<SpecResult>('POST', '/spec', { prompt }, 30_000),
   project: (id: number) => call<Project>('GET', `/projects/${id}`),
   createProject: (body: { prompt?: string }) => call<Project>('POST', '/projects', body, LONG),
   deleteProject: (id: number) => call<{ ok: boolean }>('DELETE', `/projects/${id}`),
@@ -119,9 +148,26 @@ export const forge = {
   chat: (id: number, message: string) => call<ChatResult>('POST', `/projects/${id}/chat`, { message }, LONG),
   publish: (id: number, published: boolean) => call<Project>('POST', `/projects/${id}/publish?published=${published}`),
 
-  startRace: (prompt: string) => call<Race>('POST', '/races', { prompt }, LONG),
+  startRace: (prompt: string) => call<RaceStart>('POST', '/races', { prompt }, LONG),
   races: () => call<Race[]>('GET', '/races'),
+  race: (id: number) => call<Race>('GET', `/races/${id}`),
   selectRace: (id: number, index: number) => call<Project>('POST', `/races/${id}/select/${index}`),
+  streamRace: (raceId: number, onModel: (e: RaceModelEvent) => void, onDone: () => void) => {
+    const es = new EventSource(`/api/v1/forge/races/${raceId}/events`);
+    es.addEventListener('race_model', (ev: MessageEvent) => {
+      try {
+        onModel(JSON.parse(ev.data as string) as RaceModelEvent);
+      } catch {
+        /* ignore malformed frame */
+      }
+    });
+    es.addEventListener('done', () => {
+      onDone();
+      es.close();
+    });
+    es.onerror = () => es.close();
+    return es;
+  },
 
   // async run + SSE
   startRun: (body: { message: string; project_id?: number }) =>

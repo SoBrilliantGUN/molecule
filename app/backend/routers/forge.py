@@ -1,4 +1,4 @@
-"""Atoms Forge HTTP API (single-user demo, no login)."""
+"""Molecules Forge HTTP API (single-user demo, no login)."""
 
 import logging
 from typing import Optional
@@ -12,7 +12,7 @@ from models.chat_messages import ChatMessages
 from models.llm_calls import LlmCalls
 from models.projects import Projects
 from models.races import Races
-from services.forge import agent, extras, gateway, ops, repo, run_manager
+from services.forge import agent, extras, gateway, ops, repo, run_manager, spec
 from services.forge.breaker import breakers
 from services.forge.util import DomainError, dumps, loads
 
@@ -57,6 +57,11 @@ class RaceBody(BaseModel):
 class RunBody(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     project_id: Optional[int] = None
+    model: Optional[str] = None
+
+
+class SpecBody(BaseModel):
+    prompt: str = Field(min_length=1, max_length=4000)
     model: Optional[str] = None
 
 
@@ -109,6 +114,14 @@ async def chat(project_id: int, body: ChatBody) -> dict:
         return await agent.chat(project_id, body.message, body.model)
     except (DomainError, gateway.GatewayError) as exc:
         raise _err(exc) from exc
+
+
+# ---------- requirement understanding (pre-generation) ----------
+
+@router.post("/spec")
+async def understand_spec(body: SpecBody) -> dict:
+    """解析一句话需求 → 结构化理解 + 是否需要追问。生成前的轻量步骤，失败也 fail-open。"""
+    return await spec.understand(body.prompt, body.model)
 
 
 # ---------- published runtime ----------
@@ -175,14 +188,32 @@ async def breaker_reset() -> dict:
 
 @router.post("/races")
 async def start_race(body: RaceBody) -> dict:
-    race = await extras.start_race(body.prompt, body.models)
-    return {**race, "results": loads(race["results_json"], {}), "results_json": None}
+    """Start a race; returns {id, run_key} immediately. Progress streams via /races/{id}/events."""
+    return await extras.start_race(body.prompt, body.models)
 
 
 @router.get("/races")
 async def races() -> list[dict]:
     rows = await repo.find(Races, order=Races.id.desc(), limit=30)
     return [{**r, "results": loads(r["results_json"], {}), "results_json": None} for r in rows]
+
+
+@router.get("/races/{race_id}")
+async def race(race_id: int) -> dict:
+    row = await repo.get(Races, race_id)
+    if not row:
+        raise HTTPException(404, "对比任务不存在")
+    return {**row, "results": loads(row["results_json"], {}), "results_json": None}
+
+
+@router.get("/races/{race_id}/events")
+async def race_events(race_id: int) -> StreamingResponse:
+    """SSE stream of race_model/done/error events for one race (keyed by race-{id})."""
+    row = await repo.get(Races, race_id)
+    if not row:
+        raise HTTPException(404, "对比任务不存在")
+    stream = await run_manager.make_sse_stream(f"race-{race_id}")
+    return StreamingResponse(stream, media_type="text/event-stream")
 
 
 @router.post("/races/{race_id}/select/{index}")

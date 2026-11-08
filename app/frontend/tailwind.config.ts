@@ -27,7 +27,6 @@ export default {
         video: '16 / 9',
       },
       colors: {
-        ember: { DEFAULT: 'hsl(var(--ember))' },
         ink: 'hsl(var(--ink))',
         sunk: 'hsl(var(--sunk))',
         ok: 'hsl(var(--ok))',

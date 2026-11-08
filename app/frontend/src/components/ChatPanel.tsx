@@ -14,7 +14,7 @@ function Trace({ events }: { events?: TraceEvent[] }) {
     <ul className="mt-2 space-y-0.5">
       {shown.map((e, i) => (
         <li key={i} className="flex gap-2 font-mono-ui text-xs text-muted-foreground">
-          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-ember" />
+          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
           <span className="break-all">{e.text}</span>
         </li>
       ))}
@@ -82,7 +82,7 @@ export default function ChatPanel({ projectId, onChanged }: Props) {
           </div>
         ))}
         {liveEvents.length > 0 && (
-          <div className="space-y-1 border-l-2 border-ember pl-3">
+          <div className="space-y-1 border-l-2 border-primary pl-3">
             {liveEvents.map((e, i) => (
               <p key={i} className="font-mono-ui text-xs text-muted-foreground">
                 {e.text}
@@ -91,7 +91,7 @@ export default function ChatPanel({ projectId, onChanged }: Props) {
           </div>
         )}
         {busy && (
-          <p className="flex items-center gap-2 border-l-2 border-ember pl-3 text-sm text-muted-foreground">
+          <p className="flex items-center gap-2 border-l-2 border-primary pl-3 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             Agent 正在生成或修改应用…
           </p>

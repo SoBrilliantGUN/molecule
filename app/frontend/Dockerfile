@@ -1,4 +1,4 @@
-# ===== Atoms 前端镜像（多阶段：node 构建 → nginx 托管 + /api 反代）=====
+# ===== Molecules 前端镜像（多阶段：node 构建 → nginx 托管 + /api 反代）=====
 
 # ---- 构建阶段 ----
 FROM node:24-alpine AS build
@@ -8,6 +8,7 @@ WORKDIR /app
 COPY .npmrc .npmrc
 
 # 用 npm 装 pnpm（走 .npmrc 的镜像），避开 corepack 下载独立二进制
+# 字体走 @fontsource 自托管：pnpm install 从 npmmirror 拉字体包，构建时由 Vite 打进 dist，运行时零外部字体依赖
 COPY package.json pnpm-workspace.yaml ./
 RUN npm install -g pnpm@12.3.4 && pnpm install
 

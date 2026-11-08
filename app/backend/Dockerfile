@@ -1,4 +1,4 @@
-# ===== Atoms 后端镜像 =====
+# ===== Molecules 后端镜像 =====
 FROM python:3.12-slim
 
 WORKDIR /app

@@ -29,7 +29,7 @@ export default function ProjectPage() {
   if (!project) return <p className="p-8 text-muted-foreground">加载项目…</p>;
 
   return (
-    <div className="flex h-[calc(100vh-56px)] flex-col md:h-screen">
+    <div className="flex h-[calc(100vh-56px)] flex-col">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-2">
           <Link to="/" aria-label="返回首页" className="flex h-10 w-10 items-center justify-center hover:bg-sunk"><ChevronLeft className="h-5 w-5" /></Link>
@@ -38,7 +38,7 @@ export default function ProjectPage() {
         </div>
         <div className="flex border border-border md:hidden">
           {(['chat', 'stage'] as const).map((p) => (
-            <button key={p} onClick={() => setPane(p)} className={`min-h-[40px] px-3 text-sm ${pane === p ? 'bg-ink text-white' : ''}`}>{p === 'chat' ? '对话' : '应用'}</button>
+            <button key={p} onClick={() => setPane(p)} className={`min-h-[40px] px-3 text-sm ${pane === p ? 'bg-primary text-primary-foreground' : ''}`}>{p === 'chat' ? '对话' : '应用'}</button>
           ))}
         </div>
       </header>
@@ -49,7 +49,7 @@ export default function ProjectPage() {
         <section className={`flex min-h-0 flex-col ${pane === 'stage' ? 'flex' : 'hidden'} md:flex`}>
           <div className="flex h-11 shrink-0 gap-1 border-b border-border px-3">
             {TABS.map(([key, label]) => (
-              <button key={key} onClick={() => setTab(key)} className={`px-3 text-sm ${tab === key ? 'border-b-2 border-ember font-medium' : 'text-muted-foreground hover:text-foreground'}`}>{label}</button>
+              <button key={key} onClick={() => setTab(key)} className={`px-3 text-sm ${tab === key ? 'border-b-2 border-primary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>{label}</button>
             ))}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
