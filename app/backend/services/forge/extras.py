@@ -5,6 +5,7 @@ import logging
 import os
 
 from models.agent_runs import AgentRuns
+from models.chat_messages import ChatMessages
 from models.races import Races
 from services.forge import codegen, ops, repo
 from services.forge.budget import Budget
@@ -88,4 +89,8 @@ async def select_race(race_id: int, model: str) -> dict:
         raise DomainError("该方案不可选")
     project = await ops.create_project(chosen.get("title") or race["prompt"][:40], chosen["html"], description=race["prompt"][:200])
     await repo.update(Races, race_id, selected_index=chosen_index, project_id=project["id"])
+    # 与单模型 `_persist_project` 对齐：把原始需求也落进聊天历史，否则赛马项目聊天框为空，
+    # 退出重进后「之前的对话内容消失」。
+    await repo.add(ChatMessages, project_id=project["id"], role="user", content=race["prompt"])
+    await repo.add(ChatMessages, project_id=project["id"], role="assistant", content=f"已生成「{project['name']}」。")
     return project
