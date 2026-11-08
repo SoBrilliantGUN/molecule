@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from models.agent_runs import AgentRuns
@@ -18,6 +18,9 @@ from services.forge.util import DomainError, dumps, loads
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/forge", tags=["forge"])
+
+# SSE 必需的头：禁止缓冲/缓存，否则事件会被 nginx 或客户端攒成一块才发出，导致「进度不及时」。
+SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
 
 
 def _err(exc: Exception) -> HTTPException:
@@ -52,12 +55,14 @@ class ChatBody(BaseModel):
 class RaceBody(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     models: Optional[list[str]] = None
+    client_key: Optional[str] = None  # 幂等键：同一 client_key 只开一场赛马
 
 
 class RunBody(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     project_id: Optional[int] = None
     model: Optional[str] = None
+    client_key: Optional[str] = None  # 幂等键：同一 client_key 只生成一次，前端刷新复用同一次生成
 
 
 class SpecBody(BaseModel):
@@ -70,7 +75,15 @@ class SpecBody(BaseModel):
 @router.get("/projects")
 async def projects() -> list[dict]:
     rows = await repo.find(Projects, order=Projects.id.desc(), limit=100)
-    return [_project_row(r) for r in rows]
+    running = await repo.find(AgentRuns, AgentRuns.status == "running")
+    run_by_project = {r["project_id"]: r["run_key"] for r in running if r.get("project_id")}
+    out = []
+    for r in rows:
+        d = _project_row(r)
+        d["generating"] = r["id"] in run_by_project
+        d["run_key"] = run_by_project.get(r["id"])
+        out.append(d)
+    return out
 
 
 @router.post("/projects")
@@ -90,7 +103,19 @@ async def get_project(project_id: int) -> dict:
         project = await ops.get_project(project_id)
     except DomainError as exc:
         raise _err(exc) from exc
-    return _project_row(project)
+    latest = await repo.find(AgentRuns, AgentRuns.project_id == project_id, order=AgentRuns.id.desc(), limit=1)
+    run = latest[0] if latest else None
+    status = run["status"] if run else None
+    error = None
+    if run and run["status"] == "error":
+        error = (loads(run.get("result_json"), {}) or {}).get("error")
+    return {
+        **_project_row(project),
+        "generating": bool(run and run["status"] == "running"),
+        "run_key": run["run_key"] if run else None,
+        "status": status,
+        "error": error,
+    }
 
 
 @router.delete("/projects/{project_id}")
@@ -124,39 +149,39 @@ async def understand_spec(body: SpecBody) -> dict:
     return await spec.understand(body.prompt, body.model)
 
 
-# ---------- published runtime ----------
-
-@router.get("/runtime/{slug}", response_class=HTMLResponse)
-async def runtime_app(slug: str) -> HTMLResponse:
-    """Serve the published single-file HTML app directly."""
-    try:
-        project = await ops.get_project(slug)
-    except DomainError as exc:
-        raise _err(exc) from exc
-    if not project.get("published"):
-        raise HTTPException(403, "该应用尚未发布")
-    return HTMLResponse(project.get("html") or "<h1>空应用</h1>")
-
-
 # ---------- asynchronous run + SSE ----------
 
 @router.post("/runs")
 async def start_run(body: RunBody) -> dict:
     """Start an async run (long DAG or short ReAct). Returns run_key immediately;
-    progress streams via GET /runs/{run_key}/events."""
+    progress streams via GET /runs/{run_key}/events.
+
+    新建应用会立即创建占位项目（name=提示词前 40 字），让「我的项目」实时看到生成中的条目；
+    用户点进去可续看进度，生成完成后直接展示应用。
+    """
     import uuid
 
-    run_key = uuid.uuid4().hex[:16]
-    await repo.add(AgentRuns, run_key=run_key, project_id=body.project_id, status="running", user_input=body.message[:2000])
-    run_manager.start_run(run_key, agent.start_forge(run_key, body.message, body.project_id, body.model))
-    return {"run_key": run_key, "project_id": body.project_id}
+    run_key = body.client_key or uuid.uuid4().hex[:16]
+    # 幂等：同一 client_key 若已存在（running 或 done），直接复用，不重复生成。
+    # 这样前端在生成页刷新/重进时，后端返回同一次 run 和同一个占位项目，不会再造新应用。
+    existing = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
+    if existing:
+        return {"run_key": run_key, "project_id": existing[0].get("project_id")}
+
+    project_id = body.project_id
+    if project_id is None:
+        placeholder = await ops.create_project(body.message.strip()[:40] or "新应用", "", description=body.message[:200])
+        project_id = placeholder["id"]
+    await repo.add(AgentRuns, run_key=run_key, project_id=project_id, status="running", user_input=body.message[:2000])
+    run_manager.start_run(run_key, agent.start_forge(run_key, body.message, project_id, body.model))
+    return {"run_key": run_key, "project_id": project_id}
 
 
 @router.get("/runs/{run_key}/events")
 async def run_events(run_key: str) -> StreamingResponse:
     """SSE stream of stage/dag/verify/done/error events for a run."""
     stream = await run_manager.make_sse_stream(run_key)
-    return StreamingResponse(stream, media_type="text/event-stream")
+    return StreamingResponse(stream, media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 # ---------- runs / usage / breakers ----------
@@ -189,7 +214,7 @@ async def breaker_reset() -> dict:
 @router.post("/races")
 async def start_race(body: RaceBody) -> dict:
     """Start a race; returns {id, run_key} immediately. Progress streams via /races/{id}/events."""
-    return await extras.start_race(body.prompt, body.models)
+    return await extras.start_race(body.prompt, body.models, body.client_key)
 
 
 @router.get("/races")
@@ -213,7 +238,7 @@ async def race_events(race_id: int) -> StreamingResponse:
     if not row:
         raise HTTPException(404, "对比任务不存在")
     stream = await run_manager.make_sse_stream(f"race-{race_id}")
-    return StreamingResponse(stream, media_type="text/event-stream")
+    return StreamingResponse(stream, media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 @router.post("/races/{race_id}/select/{index}")

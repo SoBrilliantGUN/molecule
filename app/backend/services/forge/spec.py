@@ -12,7 +12,7 @@ import logging
 import os
 import uuid
 
-from services.forge import gateway
+from services.forge import gateway, seed
 from services.forge.budget import Budget
 from services.forge.gateway import RunContext
 from services.forge.util import extract_json
@@ -72,6 +72,10 @@ def _safe_fields(raw: list) -> list[dict]:
 
 async def understand(prompt: str, model: str | None = None) -> dict:
     """One lightweight LLM call → normalized spec. Never raises (fail-open to no-clarify)."""
+    mock = seed.match_mock(prompt)
+    if mock:
+        # 命中预生成示例：无需追问、无需调用模型，直接给一个确定性的规格。
+        return {"needs_clarify": False, "title": mock["name"], "fields": [], "view": "", "confidence": 1.0, "questions": []}
     ctx = RunContext(run_key=uuid.uuid4().hex[:16], budget=Budget())
     try:
         result = await gateway.chat(

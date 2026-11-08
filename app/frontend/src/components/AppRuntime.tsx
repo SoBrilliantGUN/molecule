@@ -35,7 +35,7 @@ export default function AppRuntime({ appRef, refreshKey = 0 }: Props) {
     <iframe
       title={project.name}
       srcDoc={project.html}
-      sandbox="allow-scripts allow-same-origin allow-modals"
+      sandbox="allow-scripts allow-same-origin allow-modals allow-forms"
       className="h-full min-h-[520px] w-full border-0 bg-white"
     />
   );

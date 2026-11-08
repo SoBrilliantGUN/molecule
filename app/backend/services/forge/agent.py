@@ -17,7 +17,7 @@ from langgraph.graph import END, START, StateGraph
 
 from models.agent_runs import AgentRuns
 from models.chat_messages import ChatMessages
-from services.forge import codegen, gateway, ops, repo
+from services.forge import codegen, gateway, ops, repo, seed
 from services.forge.budget import Budget, BudgetExceeded
 from services.forge.gateway import GatewayError, RunContext
 from services.forge.util import DomainError, dumps, extract_json, loads
@@ -125,7 +125,8 @@ async def create_from_prompt(prompt: str, model: str | None = None) -> dict:
     """New app: one-liner -> single-file HTML -> project. Kept as the synchronous
     compat path (POST /projects); the streaming path goes through start_forge."""
     ctx = RunContext(run_key=uuid.uuid4().hex[:16], budget=Budget())
-    out = await _run_classified(ctx, _noop_emit, _noop_checkpoint, prompt, None, model)
+    mock = seed.match_mock(prompt)
+    out = {"html": mock["html"], "title": mock["name"], "verify": {}} if mock else await _run_classified(ctx, _noop_emit, _noop_checkpoint, prompt, None, model)
     project = await _persist_project(ctx, out, prompt, None)
     return project
 
@@ -194,8 +195,13 @@ async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: s
             await emit("stage", {"index": 0, "total": 0, "text": "检测到未完成的长任务，从断点续跑…"})
             out = await run_stages_resume(ctx, emit, checkpoint, prompt, resume_state)
         else:
-            await emit("stage", {"index": 0, "total": 0, "text": "接收需求，判定任务复杂度…"})
-            out = await _run_classified(ctx, emit, checkpoint, prompt, project_id, model)
+            mock = seed.match_mock(prompt)
+            if mock:
+                await emit("stage", {"index": 0, "total": 0, "text": f"命中预生成示例「{mock['name']}」，直接返回（无需调用模型）"})
+                out = {"html": mock["html"], "title": mock["name"], "verify": {}}
+            else:
+                await emit("stage", {"index": 0, "total": 0, "text": "接收需求，开始生成…"})
+                out = await _run_classified(ctx, emit, checkpoint, prompt, project_id, model)
         project = await _persist_project(ctx, out, prompt, project_id)
         row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
         if row:
@@ -212,29 +218,24 @@ async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: s
 
 
 async def _run_classified(ctx, emit, checkpoint, prompt: str, project_id: int | None, model: str | None) -> dict:
-    """Shared decision core: classify long/short, then route to DAG or ReAct.
+    """单次完整生成 + 三校核验（ReAct）。DAG 分阶段拼接片段已退役。
 
-    Returns {html, title, verify} — the generated single-file app.
+    之前按复杂度把新建/大改路由到 DAG，但 DAG 逐阶段拼接片段会产出「空 HTML / 半成品 /
+    无限补丁」，反而更糟。统一走 codegen.generate 一次产出完整单文件 HTML + 跨模型核验。
+    current_html 为空（新建占位项目）视为无现有内容 → 全新生成；有内容 → 在其上迭代。
     """
-    from services.forge import router
-    from services.forge.forge_dag import run_stages
     from services.forge.forge_react import generate_verified
 
-    route = await router.classify(ctx, prompt, has_project=project_id is not None)
-    await emit("stage", {"index": 0, "total": 0, "text": "复杂度判定：长任务（DAG 分阶段）" if route == "long" else "复杂度判定：短任务（单次生成+校验）"})
-    if route == "long":
-        return await run_stages(ctx, emit, checkpoint, prompt)
-    # short: ReAct single generate with triple-check
     current = None
     if project_id is not None:
         project = await ops.get_project(project_id)
-        current = project.get("html") if project else None
+        current = project.get("html") or None
     return await generate_verified(ctx, prompt, current, model=model, emit=emit)
 
 
 async def _persist_project(ctx: RunContext, out: dict, prompt: str, project_id: int | None) -> dict:
     """Persist the final HTML into a project (+ chat messages). project_id None -> create new."""
-    html = out["html"]
+    html = codegen.sanitize_html(out["html"])
     title = out.get("title") or prompt[:40]
     if project_id is not None:
         project = await ops.update_project_html(project_id, html, title)

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { forge, type Project } from '@/lib/forge';
+import { forge, type Project, type RaceModelEvent } from '@/lib/forge';
 
 interface Pane {
   model: string;
@@ -19,6 +19,12 @@ export default function CreatePage() {
   const [params] = useSearchParams();
   const prompt = params.get('prompt') ?? '';
   const raceMode = params.get('race') === '1';
+  const key = params.get('key') ?? undefined;
+  const raceIdParam = params.get('raceId');
+  const existingRaceId = raceIdParam ? Number(raceIdParam) : null;
+
+  // 赛马的标题用 race 自己的 prompt（续看时 URL 里可能没有 prompt）
+  const [racePrompt, setRacePrompt] = useState('');
 
   // 单模型
   const [events, setEvents] = useState<string[]>([]);
@@ -30,12 +36,14 @@ export default function CreatePage() {
   const [raceId, setRaceId] = useState<number | null>(null);
   const [panes, setPanes] = useState<Pane[]>([]);
   const [raceDone, setRaceDone] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
 
-  const runSingle = useCallback((message: string, projectId?: number) => {
+  const runSingle = useCallback((message: string, projectId?: number, clientKey?: string) => {
     setBusy(true);
     setEvents([]);
     forge
-      .startRun({ message, project_id: projectId })
+      .startRun({ message, project_id: projectId, client_key: clientKey })
       .then(({ run_key }) => {
         forge.streamRun(
           run_key,
@@ -54,29 +62,64 @@ export default function CreatePage() {
       });
   }, []);
 
+  const applyRaceEvent = useCallback((ev: RaceModelEvent) => {
+    setPanes((prev) => {
+      const upd = { model: ev.model, status: ev.status, text: ev.text, title: ev.title, html: ev.html } as Pane;
+      return prev.some((p) => p.model === ev.model) ? prev.map((p) => (p.model === ev.model ? upd : p)) : [...prev, upd];
+    });
+  }, []);
+
   const runRace = useCallback(() => {
+    setRacePrompt(prompt);
     forge
-      .startRace(prompt)
+      .startRace(prompt, key)
       .then(({ id, models }) => {
         setRaceId(id);
         setPanes(models.map((m) => ({ model: m, status: 'waiting' as const })));
         forge.streamRace(
           id,
-          (ev) => setPanes((prev) => prev.map((p) => (p.model === ev.model ? { ...p, status: ev.status, text: ev.text, title: ev.title, html: ev.html } : p))),
+          applyRaceEvent,
           () => setRaceDone(true),
         );
       })
       .catch((e) => toast.error((e as Error).message));
-  }, [prompt]);
+  }, [prompt, key, applyRaceEvent]);
+
+  const resumeRace = useCallback((id: number) => {
+    setRaceId(id);
+    forge
+      .race(id)
+      .then((r) => {
+        setRacePrompt(r.prompt ?? '');
+        const items = r.results?.items ?? [];
+        setPanes(items.map((it) => ({ model: it.model, status: (it.ok ? 'done' : 'error') as Pane['status'], title: it.title, html: it.html, text: it.error })));
+        setRaceDone(r.status === 'done');
+        setSelectedIndex(r.selected_index);
+        setSelectedProjectId(r.project_id);
+        if (r.status !== 'done') {
+          forge.streamRace(
+            id,
+            applyRaceEvent,
+            () => setRaceDone(true),
+          );
+        }
+      })
+      .catch((e) => toast.error((e as Error).message));
+  }, [applyRaceEvent]);
 
   useEffect(() => {
+    if (raceMode) {
+      if (existingRaceId != null) resumeRace(existingRaceId);
+      else if (!prompt) nav('/');
+      else runRace();
+      return;
+    }
     if (!prompt) {
       nav('/');
       return;
     }
-    if (raceMode) runRace();
-    else runSingle(prompt);
-  }, [prompt, raceMode, runSingle, runRace, nav]);
+    runSingle(prompt, undefined, key);
+  }, [prompt, raceMode, existingRaceId, runSingle, runRace, resumeRace, nav, key]);
 
   const submitModify = () => {
     const t = modify.trim();
@@ -86,10 +129,12 @@ export default function CreatePage() {
   };
 
   const selectRace = async (index: number) => {
-    if (raceId == null) return;
+    if (raceId == null || selectedIndex != null) return;
     try {
       const p = await forge.selectRace(raceId, index);
-      nav(`/project/${p.id}`);
+      setSelectedIndex(index);
+      setSelectedProjectId(p.id);
+      toast.success('已选中该方案，应用已加入「我的项目」');
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -104,17 +149,17 @@ export default function CreatePage() {
         <h1 className="font-display text-2xl font-bold">{raceMode ? '多方案并行生成' : '正在生成'}</h1>
         <span className="text-sm text-muted-foreground">{raceMode ? '赛马模式' : '单模型'}</span>
       </div>
-      <p className="mt-2 text-sm text-muted-foreground">「{prompt}」</p>
+      <p className="mt-2 text-sm text-muted-foreground">「{raceMode ? (racePrompt || prompt) : prompt}」</p>
 
       {raceMode ? (
         <div className="mt-5">
           <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3.5 py-1.5 text-xs text-primary">
             <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
-            {raceDone ? '全部完成 · 点开一个项目' : `${panes.length} 个模型并行生成中…`}
+            {selectedIndex != null ? '已选中一个方案' : raceDone ? '全部完成 · 选择一个方案' : `${panes.filter((p) => p.status === 'done').length}/${panes.length} 已完成 · 并行生成中…`}
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2">
             {panes.map((p, i) => (
-              <div key={p.model} className="flex min-h-[360px] flex-col rounded-xl border border-border p-4">
+              <div key={p.model} className="flex min-h-[420px] flex-col rounded-xl border border-border p-4">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold text-muted-foreground">{p.model}</span>
                   <span className="text-xs text-muted-foreground">{STATUS_LABEL[p.status]}</span>
@@ -132,14 +177,24 @@ export default function CreatePage() {
                     </div>
                   )}
                   {p.status === 'done' && p.html && (
-                    <iframe title={p.title ?? p.model} srcDoc={p.html} sandbox="allow-scripts allow-same-origin" className="h-44 w-full rounded-lg border border-border bg-white" />
+                    <iframe title={p.title ?? p.model} srcDoc={p.html} sandbox="allow-scripts allow-same-origin allow-modals allow-forms" className="h-[420px] w-full rounded-lg border border-border bg-white" />
                   )}
                   {p.status === 'error' && <p className="text-xs text-destructive">{p.text}</p>}
                 </div>
-                {p.status === 'done' && (
-                  <button onClick={() => void selectRace(i)} className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90">
-                    打开此项目
-                  </button>
+                {p.status === 'done' && raceDone && (
+                  selectedIndex === i ? (
+                    <Link to={`/project/${selectedProjectId}`} className="mt-3 inline-flex h-9 w-full items-center justify-center gap-1 rounded-lg bg-green-600 text-sm font-semibold text-white hover:bg-green-700">
+                      ✓ 已选中 · 打开应用
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={() => void selectRace(i)}
+                      disabled={selectedIndex != null}
+                      className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-gray-300"
+                    >
+                      选中此方案
+                    </button>
+                  )
                 )}
               </div>
             ))}
@@ -149,7 +204,7 @@ export default function CreatePage() {
         <div className="mt-5 grid gap-4 lg:grid-cols-[340px_1fr]">
           <div className="rounded-xl border border-border">
             <div className="border-b border-border px-4 py-2.5 text-xs font-semibold text-muted-foreground">生成进度</div>
-            <div className="space-y-1.5 p-4">
+            <div className="max-h-[420px] space-y-1.5 overflow-y-auto p-4">
               {events.length === 0 && busy && (
                 <p className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" /> 正在接收…
@@ -170,7 +225,7 @@ export default function CreatePage() {
           </div>
           <div className="flex flex-col gap-3">
             {project?.html ? (
-              <iframe title={project.name} srcDoc={project.html} sandbox="allow-scripts allow-same-origin allow-modals" className="h-[420px] w-full rounded-xl border border-border bg-white" />
+              <iframe title={project.name} srcDoc={project.html} sandbox="allow-scripts allow-same-origin allow-modals allow-forms" className="h-[420px] w-full rounded-xl border border-border bg-white" />
             ) : (
               <div className="flex h-[420px] items-center justify-center rounded-xl border border-dashed border-border text-sm text-muted-foreground">
                 {busy ? '生成中…' : '等待生成'}

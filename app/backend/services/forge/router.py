@@ -15,7 +15,7 @@ from services.forge.util import extract_json, loads
 logger = logging.getLogger(__name__)
 
 # 复杂度分类模型（轻量）：复用意图模型，避免多一个模型配置项。
-CLASSIFY_MODEL = os.environ.get("LLM_CLASSIFY_MODEL") or os.environ.get("LLM_INTENT_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
+CLASSIFY_MODEL = os.environ.get("LLM_CLASSIFY_MODEL") or os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
 CLASSIFY_SYSTEM = (
     "你是任务复杂度分类器。判断这条需求是「长任务」还是「短任务」。\n"
@@ -34,8 +34,9 @@ async def classify(ctx: RunContext, message: str, has_project: bool, history: st
     has_project：是否已有 project（迭代修改）。强启发：无项目 → 大概率新建 → long。
     """
     if not has_project:
-        # 新建应用，即便一句话也要完整生成，直接走长任务拆阶段
-        return "long"
+        # 新建应用走短任务：单次生成完整文档 + 三校核验。之前走 DAG 分阶段拼接片段，
+        # 模型常返回带 markdown 围栏/片段指令注释的半成品，导致页面「白底黑字露出代码」。
+        return "short"
 
     # 有 project：让模型判断是局部小改还是大改/重写
     user = f"需求：{message}"

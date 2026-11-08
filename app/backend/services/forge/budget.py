@@ -25,7 +25,7 @@ def _env_float(name: str, default: float) -> float:
 @dataclass
 class BudgetLimits:
     max_turns: int = int(_env_float("FORGE_MAX_TURNS", 400))
-    max_seconds: float = _env_float("FORGE_MAX_SECONDS", 1800)
+    max_seconds: float = _env_float("FORGE_MAX_SECONDS", 3600)
     max_tokens: int = int(_env_float("FORGE_MAX_TOKENS", 3_000_000))
     max_cost_cny: float = _env_float("FORGE_MAX_COST_CNY", 800)
     max_tool_calls: int = int(_env_float("FORGE_MAX_TOOL_CALLS", 800))

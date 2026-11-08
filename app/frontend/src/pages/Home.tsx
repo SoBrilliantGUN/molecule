@@ -4,17 +4,25 @@ import { ChevronDown, Loader2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { forge, type Project, type SpecResult } from '@/lib/forge';
+import { forge, type Project, type Race, type SpecResult } from '@/lib/forge';
 
-const EXAMPLES = ['做一个读书笔记管理，记录书名、作者、阅读状态和评分', '做一个健身打卡应用，记录日期、动作、组数、重量', '做一个招聘跟进表，包含候选人、岗位、面试阶段'];
+const EXAMPLES = [
+  { name: '读书笔记', prompt: '做一个读书笔记管理，记录书名、作者、阅读状态和评分' },
+  { name: '健身打卡', prompt: '做一个健身打卡应用，记录日期、动作、组数、重量' },
+  { name: '招聘跟进', prompt: '做一个招聘跟进表，包含候选人、岗位、面试阶段' },
+];
 const VIEW_OPTIONS = ['', '列表', '表格', '看板', '卡片'];
 const THEME_OPTIONS = ['', '简洁克制', '活泼明快', '商务正式', '极客冷峻'];
+
+// 幂等键：每次点击「生成应用」生成一次，随 URL 带到生成页；刷新/重进时复用，避免重复生成。
+const genKey = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 export default function Home() {
   const nav = useNavigate();
   const [prompt, setPrompt] = useState('');
   const [race, setRace] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [races, setRaces] = useState<Race[]>([]);
 
   // 生成前理解 + 澄清（方案 A：一次问完、带默认值、可跳过）
   const [specBusy, setSpecBusy] = useState(false);
@@ -27,6 +35,7 @@ export default function Home() {
 
   const reload = () => {
     forge.projects().then(setProjects).catch(() => undefined);
+    forge.races().then(setRaces).catch(() => undefined);
   };
   useEffect(reload, []);
 
@@ -45,7 +54,7 @@ export default function Home() {
   };
 
   const goGenerate = (text: string) => {
-    nav(`/create?prompt=${encodeURIComponent(text)}&race=${race ? '1' : '0'}`);
+    nav(`/create?prompt=${encodeURIComponent(text)}&race=${race ? '1' : '0'}&key=${genKey()}`);
   };
 
   const create = async () => {
@@ -83,11 +92,16 @@ export default function Home() {
     }
   };
 
+  const openExample = (ex: { name: string; prompt: string }) => {
+    // 示例点击只把提示词填进输入框，由用户点「生成应用」再生成（不直接打开应用）。
+    setPrompt(ex.prompt);
+  };
+
   return (
     <div className="mx-auto max-w-[1080px] px-5 py-10 md:px-8">
       <section>
         <h1 className="font-display text-4xl font-black leading-tight md:text-[42px]">一句话，生成能用的应用。</h1>
-        <p className="mt-4 max-w-[600px] text-muted-foreground">描述你要的应用，自动生成数据模型和可运行的网页应用。实时预览，继续对话即可修改，满意后一键发布或导出。</p>
+        <p className="mt-4 max-w-[600px] text-muted-foreground">描述你要的应用，自动生成数据模型和可运行的网页应用。实时预览，继续对话即可修改，满意后导出使用。</p>
 
         <div className="mt-7 max-w-[720px] rounded-xl border border-border p-1.5 shadow-sm">
           <Textarea
@@ -104,8 +118,8 @@ export default function Home() {
           <div className="flex items-center justify-between gap-3 border-t border-border px-2.5 py-2.5">
             <div className="flex flex-wrap gap-2">
               {EXAMPLES.map((ex) => (
-                <button key={ex} onClick={() => setPrompt(ex)} className="max-w-[180px] truncate rounded-full border border-border bg-sunk px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary">
-                  {ex}
+                <button key={ex.name} onClick={() => openExample(ex)} className="max-w-[180px] truncate rounded-full border border-border bg-sunk px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary">
+                  {ex.name}
                 </button>
               ))}
             </div>
@@ -250,10 +264,10 @@ export default function Home() {
                 }}
                 className="group rounded-xl border border-border p-4 transition-colors hover:border-primary"
               >
-                <div className="mb-4 flex h-24 items-center justify-center rounded-lg border border-border bg-sunk text-xs text-muted-foreground">{p.name}</div>
+                <div className="mb-4 flex h-24 items-center justify-center rounded-lg border border-border bg-sunk px-3 text-center text-xs text-muted-foreground">{p.generating ? '正在生成…' : p.name}</div>
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="font-semibold">{p.name}</div>
+                    <div className="line-clamp-2 font-semibold" title={p.name}>{p.name}</div>
                     <div className="mt-1 text-xs text-muted-foreground">更新于 {p.updated_at?.slice(0, 16) ?? '—'}</div>
                   </div>
                   <button
@@ -265,8 +279,8 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="mt-3">
-                  <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs ${p.published ? 'border-green-200 bg-green-50 text-ok' : 'border-border text-muted-foreground'}`}>
-                    {p.published ? '已发布' : '草稿'}
+                  <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs ${p.generating ? 'border-amber-200 bg-amber-50 text-amber-600' : 'border-border text-muted-foreground'}`}>
+                    {p.generating ? '生成中…' : '草稿'}
                   </span>
                 </div>
               </a>
@@ -274,6 +288,41 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {races.length > 0 && (
+        <section className="mt-10">
+          <div className="flex items-baseline justify-between">
+            <h2 className="font-display text-2xl font-bold">赛马</h2>
+            <span className="text-sm text-muted-foreground">{races.length} 次</span>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {races.map((r) => {
+              const done = (r.results?.items ?? []).filter((it) => it.ok).length;
+              return (
+                <a
+                  key={r.id}
+                  href={`/create?race=1&raceId=${r.id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    nav(`/create?race=1&raceId=${r.id}`);
+                  }}
+                  className="group rounded-xl border border-border p-4 transition-colors hover:border-primary"
+                >
+                  <div className="line-clamp-2 font-semibold" title={r.prompt}>{r.prompt}</div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">
+                      {r.status === 'running' ? '生成中…' : `${done} 个方案可选`}
+                    </span>
+                    <span className="text-sm text-primary group-hover:underline">
+                      {r.status === 'running' ? '查看进度' : '选择方案'} →
+                    </span>
+                  </div>
+                </a>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

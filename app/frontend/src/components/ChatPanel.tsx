@@ -36,7 +36,9 @@ export default function ChatPanel({ projectId, onChanged }: Props) {
   useEffect(() => {
     forge.messages(projectId).then(setMessages).catch((e) => toast.error((e as Error).message));
   }, [projectId]);
-  useEffect(() => bottom.current?.scrollIntoView({ block: 'end' }), [messages, busy]);
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: 'end' });
+  }, [messages, busy]);
 
   const [liveEvents, setLiveEvents] = useState<TraceEvent[]>([]);
 

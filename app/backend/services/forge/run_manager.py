@@ -69,7 +69,7 @@ def is_terminal(run_key: str) -> bool:
 
 
 async def load_events(run_key: str, after: int) -> tuple[list[dict], int]:
-    """Return persisted events with sequence > after, plus the new cursor.
+    """Return persisted events with index >= after (i.e. everything after the cursor), plus the new cursor.
 
     Prefers the DB row (survives in-memory loss); falls back to in-memory list.
     """
@@ -79,7 +79,7 @@ async def load_events(run_key: str, after: int) -> tuple[list[dict], int]:
     else:
         events = []
     total = len(events)
-    tail = [e for i, e in enumerate(events) if i > after]
+    tail = [e for i, e in enumerate(events) if i >= after]
     return tail, total
 
 
@@ -152,6 +152,17 @@ async def resume_interrupted_runs() -> int:
     for r in rows:
         run_key = r.get("run_key")
         if not run_key or run_key in _live:
+            continue
+        if run_key.startswith("race-"):
+            # 赛马任务不能走单应用链路 resume_forge 续跑（会把赛马 prompt 当单应用重新生成，
+            # 凭空多出一个项目，且赛马本身卡在「生成中」）。中断的赛马直接标记结束。
+            await repo.update(AgentRuns, r["id"], status="error", result_json=dumps({"error": "赛马被重启中断"}))
+            from models.races import Races
+            race_id = run_key[len("race-"):]
+            if race_id.isdigit():
+                race_row = await repo.get(Races, int(race_id))
+                if race_row and race_row.get("status") != "done":
+                    await repo.update(Races, int(race_id), status="done")
             continue
         start_run(run_key, agent.resume_forge(run_key))
         resumed += 1

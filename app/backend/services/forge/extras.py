@@ -13,7 +13,10 @@ from services.forge.util import DomainError, dumps, loads
 
 logger = logging.getLogger(__name__)
 
-RACE_MODELS = [m.strip() for m in os.environ.get("RACE_MODELS", "deepseek-ai/DeepSeek-V4-Flash,Qwen/Qwen3-235B-A22B-Instruct,zai-org/GLM-5.3").split(",") if m.strip()]
+# 赛马候选模型：走硅基流动（模型名带 org/ 前缀）。去掉 GLM-5.3——它是「强制思考」型号，
+# 无法关闭思考（发 enable_thinking=false 会 4xx），又慢，不适合赛马的并行快出方案。
+# 第二个候选用 Qwen3-Coder-30B（快、专攻代码）；旧名 Qwen3-235B-A22B-Instruct 已不存在。
+RACE_MODELS = [m.strip() for m in os.environ.get("RACE_MODELS", "deepseek-ai/DeepSeek-V4-Flash,Qwen/Qwen3-Coder-30B-A3B-Instruct").split(",") if m.strip()]
 
 
 async def _race_one(run_key: str, prompt: str, model: str) -> dict:
@@ -26,7 +29,7 @@ async def _race_one(run_key: str, prompt: str, model: str) -> dict:
     ctx = RunContext(run_key=f"{run_key}:{model}", project_id=None, budget=Budget())
     try:
         await emit("race_model", {"model": model, "status": "running", "text": "生成 HTML…"})
-        out = await codegen.generate(ctx, prompt, model=model)
+        out = await codegen.generate(ctx, prompt, model=model, provider="siliconflow")
         await emit("race_model", {"model": model, "status": "done", "title": out["title"], "html": out["html"]})
         return {"model": model, "ok": True, "title": out["title"], "html": out["html"]}
     except (DomainError, GatewayError) as exc:
@@ -42,15 +45,23 @@ async def _race_worker(run_key: str, race_id: int, prompt: str, models: list[str
     await run_manager.emit(run_key, "done", {"race_id": race_id})
 
 
-async def start_race(prompt: str, models: list[str] | None = None) -> dict:
-    """Start a race: persist a Races row, then run all models in parallel in the background.
+async def start_race(prompt: str, models: list[str] | None = None, client_key: str | None = None) -> dict:
+    """Start a race (idempotent by client_key): persist a Races row, then run all models in parallel.
 
-    Returns {id, run_key} immediately; per-model progress streams via GET /races/{id}/events.
+    Returns {id, run_key, models} immediately; per-model progress streams via GET /races/{id}/events.
     """
     from services.forge import run_manager
 
     models = [m for m in (models or RACE_MODELS) if m][:3]
-    race = await repo.add(Races, prompt=prompt, results_json=dumps({"items": []}), status="running", selected_index=None)
+
+    # 幂等：同一 client_key 已存在赛马则直接复用，避免刷新/重进时重复开赛。
+    if client_key:
+        existing = await repo.find(Races, Races.client_key == client_key, order=Races.id.desc(), limit=1)
+        if existing:
+            race = existing[0]
+            return {"id": race["id"], "run_key": f"race-{race['id']}", "prompt": race["prompt"], "status": race["status"], "models": models}
+
+    race = await repo.add(Races, prompt=prompt, results_json=dumps({"items": []}), status="running", selected_index=None, client_key=client_key)
     race_id = race["id"]
     run_key = f"race-{race_id}"
     # Reuse run_manager's SSE event store (keyed by run_key) for the race stream.

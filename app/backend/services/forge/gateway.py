@@ -24,7 +24,18 @@ from services.forge.util import DomainError, sha
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = os.environ.get("LLM_MAIN_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
-LLM_BREAKER_KEYS = ["tool:llm", "resource:llm"]
+
+# 主生成走 DeepSeek 官方 API（更快更稳）；核验（跨家换脑）才走 SiliconFlow。
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
+# DeepSeek 挂了之后的 fallback 模型（SiliconFlow 侧的 DeepSeek 等价物）。
+DEEPSEEK_FALLBACK_MODEL = os.environ.get("DEEPSEEK_FALLBACK_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
+
+# 按 provider 分熔断器：DeepSeek 的失败不能把 SiliconFlow 的 fallback 一起熔断。
+BREAKER_KEYS = {
+    "deepseek": ["llm:deepseek"],
+    "siliconflow": ["llm:siliconflow"],
+}
 
 
 class GatewayError(DomainError):
@@ -51,6 +62,26 @@ def _get_client() -> AsyncOpenAI:
             max_retries=0,  # 网关自带重试，交给网关
         )
     return _siliconflow_client
+
+
+_deepseek_client: AsyncOpenAI | None = None
+
+
+def _get_deepseek_client() -> AsyncOpenAI:
+    """Lazily build the DeepSeek 官方 API client (主生成用，更快更稳)."""
+    global _deepseek_client
+    if _deepseek_client is None:
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+        if not api_key:
+            raise GatewayError("未配置 DEEPSEEK_API_KEY")
+        _deepseek_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url.rstrip("/"),
+            timeout=1800.0,
+            max_retries=0,  # 网关自带重试，交给网关
+        )
+    return _deepseek_client
 
 
 def is_retryable(exc: BaseException) -> bool:
@@ -87,6 +118,7 @@ class PricingStrategy:
 
 
 PRICING: dict[str, PricingStrategy] = {
+    "deepseek-v4-flash": PricingStrategy(0.5, 2),
     "deepseek-ai/DeepSeek-V4-Flash": PricingStrategy(0.5, 2),
     "deepseek-ai/DeepSeek-V4-Pro": PricingStrategy(2, 8),
     "Qwen/Qwen3-Coder-480B-A35B-Instruct": PricingStrategy(2, 8),
@@ -149,8 +181,12 @@ async def chat(
     max_tokens: int = 4096,
     timeout: float = 600.0,  # DeepSeek 长生成可能数分钟，默认给足；生成/规划调用常显式覆盖
     policy: RetryPolicy | None = None,
+    provider: str = "deepseek",  # "deepseek"（主生成）| "siliconflow"（跨家核验）
+    thinking: bool | None = None,  # None=默认；False=关闭思考（推理型模型关闭后快很多）
 ) -> LLMResult:
-    model = model or DEFAULT_MODEL
+    client = _get_deepseek_client() if provider != "siliconflow" else _get_client()
+    model = model or (DEEPSEEK_MODEL if provider != "siliconflow" else DEFAULT_MODEL)
+    breaker_keys = BREAKER_KEYS.get(provider, BREAKER_KEYS["deepseek"])
     policy = policy or RetryPolicy()
     ctx.budget.check()
 
@@ -167,7 +203,7 @@ async def chat(
     if snap and snap.get("output") is not None:
         return LLMResult(snap["output"], model, snap.get("prompt_tokens") or 0, snap.get("completion_tokens") or 0, 0.0, 0, cached=True)
 
-    allowed, tripped = await breakers.allow(LLM_BREAKER_KEYS)
+    allowed, tripped = await breakers.allow(breaker_keys)
     if not allowed:
         raise GatewayError(f"模型调用已熔断（{tripped}），请稍后重试")
 
@@ -176,14 +212,20 @@ async def chat(
     for attempt in range(policy.attempts):
         started = time.time()
         try:
+            kwargs = {
+                "model": model,
+                "messages": [{"role": m["role"], "content": m["content"]} for m in msgs],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+            }
+            if thinking is False:
+                # 关闭思考模式：DeepSeek 官方用 thinking.disabled，硅基流动用顶层 enable_thinking=false。
+                kwargs["extra_body"] = (
+                    {"enable_thinking": False} if provider == "siliconflow" else {"thinking": {"type": "disabled"}}
+                )
             response = await asyncio.wait_for(
-                _get_client().chat.completions.create(
-                    model=model,
-                    messages=[{"role": m["role"], "content": m["content"]} for m in msgs],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    stream=False,
-                ),
+                client.chat.completions.create(**kwargs),
                 timeout=timeout,
             )
             latency = int((time.time() - started) * 1000)
@@ -193,7 +235,7 @@ async def chat(
             completion_tokens = (usage.completion_tokens if usage else 0) or estimate_tokens(content)
             cost = PRICING.get(model, FALLBACK_PRICING).cost(prompt_tokens, completion_tokens)
             ctx.budget.charge(prompt_tokens + completion_tokens, cost)  # cost computed once, here
-            await breakers.record(LLM_BREAKER_KEYS, True)
+            await breakers.record(breaker_keys, True)
             await _record(ctx, purpose, model, call_key, "ok", prompt_tokens, completion_tokens, cost, latency, output=content)
             return LLMResult(content, model, prompt_tokens, completion_tokens, cost, latency)
         except Exception as exc:  # noqa: BLE001
@@ -203,8 +245,17 @@ async def chat(
             if not retryable or attempt == policy.attempts - 1:
                 break
             await asyncio.sleep(policy.delay(attempt))
-    await breakers.record(LLM_BREAKER_KEYS, False)
+    await breakers.record(breaker_keys, False)
     await _record(ctx, purpose, model, call_key, "error", error=str(last_exc)[:500])
+    if provider == "deepseek":
+        # DeepSeek 挂了（有限重试后仍失败）→ fallback 到 SiliconFlow 用对应模型再试一次
+        logger.warning("deepseek provider failed（%s），fallback 到 siliconflow model=%s", last_exc, DEEPSEEK_FALLBACK_MODEL)
+        return await chat(
+            ctx, messages,
+            purpose=purpose, model=DEEPSEEK_FALLBACK_MODEL,
+            temperature=temperature, max_tokens=max_tokens, timeout=timeout,
+            policy=policy, provider="siliconflow",
+        )
     raise GatewayError(f"模型调用失败：{last_exc}") from last_exc
 
 

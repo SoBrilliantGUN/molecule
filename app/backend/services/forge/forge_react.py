@@ -15,7 +15,7 @@ import logging
 import os
 
 from services.forge import gateway
-from services.forge.codegen import generate
+from services.forge.codegen import generate, normalize_requirement
 from services.forge.forge_dag import side_effect_checks, verify_html
 from services.forge.gateway import RunContext
 from services.forge.util import DomainError
@@ -79,6 +79,12 @@ async def generate_verified(
     """
     emit = emit or (lambda _e, _d: None)
 
+    if current_html is None:
+        # 新建应用：先把一句话需求规范化为中性、具体的描述，规避戏谑/口语措辞触发的内容过滤。
+        await emit("verify", {"text": "正在规范化需求…", "score": 0.0, "passed": False})
+        requirement = await normalize_requirement(ctx, requirement, model=model)
+
+    await emit("verify", {"text": "正在分析需求、制定核验清单…", "score": 0.0, "passed": False})
     checks = await plan_checks(ctx, requirement)
     html = ""
     title = ""
@@ -86,9 +92,10 @@ async def generate_verified(
     missing: list[str] = []
     while attempts <= REACT_MAX_RETRY:
         focus = f"\n特别补齐此前未通过的核验项：{'；'.join(missing[:4])}" if missing else ""
-        await emit("verify", {"text": f"生成第 {attempts + 1} 轮" + (f"（补齐：{'、'.join(missing[:3])}）" if missing else ""), "score": 0.0, "passed": False, "attempt": attempts + 1})
+        await emit("verify", {"text": f"第 {attempts + 1} 轮：正在生成完整应用（模型思考中，约需 1–2 分钟）…" + (f"（补齐：{'、'.join(missing[:3])}）" if missing else ""), "score": 0.0, "passed": False, "attempt": attempts + 1})
         out = await generate(ctx, requirement + focus, current_html, model=model)
         html, title = out["html"], out["title"]
+        await emit("verify", {"text": f"第 {attempts + 1} 轮生成完成，开始结构校验…", "score": 0.0, "passed": False})
 
         # ① program side-effect / structural check
         violations = side_effect_checks(html)

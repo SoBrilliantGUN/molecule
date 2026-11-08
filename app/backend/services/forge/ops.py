@@ -37,11 +37,3 @@ async def update_project_html(project_id: int, html: str, name: str = "") -> dic
         fields["name"] = name[:40]
     await repo.update(Projects, project_id, **fields)
     return await get_project(project_id)
-
-
-async def publish(project_id: int, published: bool = True) -> dict:
-    project = await get_project(project_id)
-    if not project.get("html"):
-        raise DomainError("项目还没有生成内容，无法发布")
-    await repo.update(Projects, project_id, published=published)
-    return await get_project(project_id)

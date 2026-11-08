@@ -71,12 +71,13 @@ async def lifespan(app: FastAPI):
         # MODULE_STARTUP_END
         pass
 
-        # 崩溃恢复：把上次进程崩溃时卡在 running 状态的 run 重新拉起（长任务从断点续跑）。
-        try:
-            from services.forge import run_manager
-            await run_manager.resume_interrupted_runs()
-        except Exception as exc:  # noqa: BLE001 - resume is best-effort, must not block startup
-            logging.getLogger(__name__).warning("resume interrupted runs failed: %s", exc)
+    # 崩溃恢复：把上次进程崩溃时卡在 running 状态的 run 重新拉起（长任务从断点续跑）。
+    # 不依赖上面的 MGX_IGNORE_MODULE_INIT 开关：DB 连接按需惰性建立，可直接访问。
+    try:
+        from services.forge import run_manager
+        await run_manager.resume_interrupted_runs()
+    except Exception as exc:  # noqa: BLE001 - resume is best-effort, must not block startup
+        logger.warning("resume interrupted runs failed: %s", exc)
 
     logger.info("=== Application startup completed successfully ===")
     yield

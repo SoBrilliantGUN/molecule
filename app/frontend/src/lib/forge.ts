@@ -3,9 +3,12 @@ export interface Project {
   name: string;
   description: string | null;
   slug: string;
-  published: boolean;
   html: string | null;
   updated_at?: string;
+  generating?: boolean;
+  run_key?: string | null;
+  status?: string | null;
+  error?: string | null;
 }
 export interface TraceEvent {
   kind: string;
@@ -62,6 +65,7 @@ export interface RaceItem {
 export interface Race {
   id: number;
   prompt: string;
+  status?: string;
   selected_index: number | null;
   project_id: number | null;
   results: { items: RaceItem[] };
@@ -146,9 +150,8 @@ export const forge = {
   deleteProject: (id: number) => call<{ ok: boolean }>('DELETE', `/projects/${id}`),
   messages: (id: number) => call<ChatMessage[]>('GET', `/projects/${id}/messages`),
   chat: (id: number, message: string) => call<ChatResult>('POST', `/projects/${id}/chat`, { message }, LONG),
-  publish: (id: number, published: boolean) => call<Project>('POST', `/projects/${id}/publish?published=${published}`),
 
-  startRace: (prompt: string) => call<RaceStart>('POST', '/races', { prompt }, LONG),
+  startRace: (prompt: string, client_key?: string) => call<RaceStart>('POST', '/races', { prompt, client_key }, LONG),
   races: () => call<Race[]>('GET', '/races'),
   race: (id: number) => call<Race>('GET', `/races/${id}`),
   selectRace: (id: number, index: number) => call<Project>('POST', `/races/${id}/select/${index}`),
@@ -170,7 +173,7 @@ export const forge = {
   },
 
   // async run + SSE
-  startRun: (body: { message: string; project_id?: number }) =>
+  startRun: (body: { message: string; project_id?: number; client_key?: string }) =>
     call<RunStart>('POST', '/runs', body, 30_000),
   streamRun: (runKey: string, onEvent: (e: ForgeEvent) => void, onDone: (data: ForgeEvent['data']) => void) => {
     const es = new EventSource(`/api/v1/forge/runs/${runKey}/events`);
