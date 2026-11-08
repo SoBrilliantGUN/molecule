@@ -154,7 +154,7 @@ export const forge = {
   startRace: (prompt: string, client_key?: string) => call<RaceStart>('POST', '/races', { prompt, client_key }, LONG),
   races: () => call<Race[]>('GET', '/races'),
   race: (id: number) => call<Race>('GET', `/races/${id}`),
-  selectRace: (id: number, index: number) => call<Project>('POST', `/races/${id}/select/${index}`),
+  selectRace: (id: number, model: string) => call<Project>('POST', `/races/${id}/select`, { model }),
   streamRace: (raceId: number, onModel: (e: RaceModelEvent) => void, onDone: () => void) => {
     const es = new EventSource(`/api/v1/forge/races/${raceId}/events`);
     es.addEventListener('race_model', (ev: MessageEvent) => {

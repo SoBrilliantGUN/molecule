@@ -241,9 +241,13 @@ async def race_events(race_id: int) -> StreamingResponse:
     return StreamingResponse(stream, media_type="text/event-stream", headers=SSE_HEADERS)
 
 
-@router.post("/races/{race_id}/select/{index}")
-async def select_race(race_id: int, index: int) -> dict:
+class SelectBody(BaseModel):
+    model: str = Field(min_length=1)
+
+
+@router.post("/races/{race_id}/select")
+async def select_race(race_id: int, body: SelectBody) -> dict:
     try:
-        return _project_row(await extras.select_race(race_id, index))
+        return _project_row(await extras.select_race(race_id, body.model))
     except DomainError as exc:
         raise _err(exc) from exc

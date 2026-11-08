@@ -70,14 +70,22 @@ async def start_race(prompt: str, models: list[str] | None = None, client_key: s
     return {"id": race_id, "run_key": run_key, "prompt": prompt, "status": "running", "models": models}
 
 
-async def select_race(race_id: int, index: int) -> dict:
+async def select_race(race_id: int, model: str) -> dict:
     race = await repo.get(Races, race_id)
     if not race:
         raise DomainError("对比任务不存在")
     items = loads(race["results_json"], {}).get("items", [])
-    if not 0 <= index < len(items) or not items[index].get("ok"):
+    # 按模型名匹配，而不是按下标——前端候选顺序可能因 SSE 事件到达顺序不同而与 items 顺序不一致，
+    # 按下标会选错（选 A 落 B）。按 model 名精确定位。
+    chosen = None
+    chosen_index = None
+    for idx, item in enumerate(items):
+        if item.get("model") == model and item.get("ok"):
+            chosen = item
+            chosen_index = idx
+            break
+    if chosen is None:
         raise DomainError("该方案不可选")
-    chosen = items[index]
     project = await ops.create_project(chosen.get("title") or race["prompt"][:40], chosen["html"], description=race["prompt"][:200])
-    await repo.update(Races, race_id, selected_index=index, project_id=project["id"])
+    await repo.update(Races, race_id, selected_index=chosen_index, project_id=project["id"])
     return project

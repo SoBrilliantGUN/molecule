@@ -128,11 +128,11 @@ export default function CreatePage() {
     runSingle(t, project.id);
   };
 
-  const selectRace = async (index: number) => {
+  const selectRace = async (model: string) => {
     if (raceId == null || selectedIndex != null) return;
     try {
-      const p = await forge.selectRace(raceId, index);
-      setSelectedIndex(index);
+      const p = await forge.selectRace(raceId, model);
+      setSelectedIndex(panes.findIndex((pane) => pane.model === model));
       setSelectedProjectId(p.id);
       toast.success('已选中该方案，应用已加入「我的项目」');
     } catch (e) {
@@ -188,7 +188,7 @@ export default function CreatePage() {
                     </Link>
                   ) : (
                     <button
-                      onClick={() => void selectRace(i)}
+                      onClick={() => void selectRace(p.model)}
                       disabled={selectedIndex != null}
                       className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-gray-300"
                     >
