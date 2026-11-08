@@ -1,11 +1,10 @@
 import { NavLink } from 'react-router-dom';
-import { Activity, Flame, GitCompare, Home } from 'lucide-react';
+import { Flame, GitCompare, Home } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 const ITEMS = [
   { to: '/', label: '首页', icon: Home },
   { to: '/race', label: '对比', icon: GitCompare },
-  { to: '/console', label: '控制台', icon: Activity },
 ];
 
 export default function Shell({ children }: { children: ReactNode }) {
