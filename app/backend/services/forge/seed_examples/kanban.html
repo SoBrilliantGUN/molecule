@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>项目看板</title>
+  <style>
+    /* ===== 视觉 token · 极简瑞士 ===== */
+    :root {
+      --bg: #ffffff;
+      --surface: #fafafa;
+      --fg: #111111;
+      --muted: #777777;
+      --border: #e2e2e2;
+      --accent: #111111;
+
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+      --radius: 0px;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      --transition: 150ms ease;
+    }
+
+    /* ===== 重置 ===== */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      font-size: 16px;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.7;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ===== 焦点样式 ===== */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* ===== 布局骨架 ===== */
+    .app-header {
+      padding: 32px 24px 16px;
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .header-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .app-title {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+    }
+
+    .app-subtitle {
+      font-size: 0.9375rem;
+      color: var(--muted);
+      font-weight: 400;
+      margin-top: 4px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      font-family: var(--font-sans);
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--fg);
+      cursor: pointer;
+      transition: background var(--transition), border-color var(--transition);
+      border-radius: var(--radius);
+      line-height: 1.4;
+      min-height: 36px;
+    }
+
+    .btn:hover {
+      background: var(--surface);
+      border-color: #ccc;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .btn-primary:hover {
+      background: #333;
+      border-color: #333;
+    }
+
+    .btn-ghost {
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+      padding: 4px 8px;
+      min-height: 28px;
+      font-size: 0.8125rem;
+    }
+
+    .btn-ghost:hover {
+      color: var(--fg);
+      background: var(--surface);
+    }
+
+    .btn-danger-ghost {
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+      padding: 4px 8px;
+      min-height: 28px;
+      font-size: 0.8125rem;
+    }
+
+    .btn-danger-ghost:hover {
+      color: #c00;
+      background: #fef2f2;
+    }
+
+    /* ===== 主内容 ===== */
+    .app-main {
+      flex: 1;
+      padding: 0 24px 48px;
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* ===== 看板 ===== */
+    .board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    @media (max-width: 860px) {
+      .board {
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+    }
+
+    .column {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-direction: column;
+      min-height: 200px;
+      transition: border-color var(--transition);
+    }
+
+    .column.drag-over {
+      border-color: var(--accent);
+      background: #f5f5f5;
+    }
+
+    .column-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .column-title {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .column-count {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--muted);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 0 7px;
+      line-height: 1.6;
+      border-radius: 10px;
+      min-width: 22px;
+      text-align: center;
+    }
+
+    .column-body {
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
+      min-height: 80px;
+      transition: background var(--transition);
+    }
+
+    .column-body.drag-over {
+      background: #f0f0f0;
+    }
+
+    /* ===== 任务卡片 ===== */
+    .task-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      cursor: grab;
+      transition: box-shadow var(--transition), border-color var(--transition), opacity var(--transition);
+      position: relative;
+      user-select: none;
+    }
+
+    .task-card:hover {
+      border-color: #ccc;
+      box-shadow: var(--shadow);
+    }
+
+    .task-card:active {
+      cursor: grabbing;
+    }
+
+    .task-card.dragging {
+      opacity: 0.4;
+      border-style: dashed;
+    }
+
+    .task-card.drag-ghost {
+      opacity: 0.3;
+    }
+
+    .task-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .task-title {
+      font-size: 0.9375rem;
+      font-weight: 500;
+      line-height: 1.5;
+      word-break: break-word;
+      flex: 1;
+    }
+
+    .task-actions {
+      display: flex;
+      gap: 2px;
+      flex-shrink: 0;
+      opacity: 0;
+      transition: opacity var(--transition);
+    }
+
+    .task-card:hover .task-actions,
+    .task-card:focus-within .task-actions {
+      opacity: 1;
+    }
+
+    .task-actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: var(--radius);
+      transition: background var(--transition), color var(--transition);
+      padding: 0;
+    }
+
+    .task-actions button:hover {
+      background: var(--surface);
+      color: var(--fg);
+    }
+
+    .task-actions button.delete-btn:hover {
+      color: #c00;
+      background: #fef2f2;
+    }
+
+    .task-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      font-size: 0.75rem;
+    }
+
+    .priority-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 7px;
+      border-radius: var(--radius);
+      line-height: 1.6;
+    }
+
+    .priority-high {
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+
+    .priority-medium {
+      background: #fffbeb;
+      color: #92400e;
+    }
+
+    .priority-low {
+      background: #f0fdf4;
+      color: #166534;
+    }
+
+    .due-date {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .due-date.overdue {
+      color: #b91c1c;
+      font-weight: 600;
+    }
+
+    /* ===== 空状态 ===== */
+    .empty-state {
+      padding: 32px 16px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.875rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .empty-state svg {
+      color: var(--border);
+    }
+
+    .empty-state p {
+      max-width: 24ch;
+      line-height: 1.6;
+    }
+
+    /* ===== 提示条 ===== */
+    .alert-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 16px;
+      margin: 0 24px 16px;
+      max-width: 1280px;
+      width: calc(100% - 48px);
+      margin-left: auto;
+      margin-right: auto;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      color: #92400e;
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      border-radius: var(--radius);
+    }
+
+    .alert-bar button {
+      background: transparent;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+      font-size: 1.125rem;
+      line-height: 1;
+      padding: 4px;
+      flex-shrink: 0;
+      border-radius: var(--radius);
+    }
+
+    .alert-bar button:hover {
+      background: rgba(0, 0, 0, 0.05);
+    }
+
+    /* ===== 模态框 ===== */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 24px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity var(--transition);
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 100%;
+      max-width: 440px;
+      padding: 28px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+      transform: translateY(8px);
+      transition: transform var(--transition);
+    }
+
+    .modal-overlay.open .modal {
+      transform: translateY(0);
+    }
+
+    .modal h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      line-height: 1.3;
+      margin-bottom: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: var(--fg);
+    }
+
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 8px 10px;
+      font-size: 0.875rem;
+      font-family: var(--font-sans);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.5;
+      transition: border-color var(--transition);
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+      border-color: var(--accent);
+      outline: none;
+    }
+
+    .form-group input:user-invalid,
+    .form-group select:user-invalid {
+      border-color: #c00;
+    }
+
+    .form-error {
+      font-size: 0.75rem;
+      color: #c00;
+      margin-top: 4px;
+      display: none;
+      line-height: 1.5;
+    }
+
+    .form-error.visible {
+      display: block;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 24px;
+    }
+
+    /* ===== 页脚 ===== */
+    .app-footer {
+      padding: 16px 24px;
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+      border-top: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    /* ===== 减少动效 ===== */
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+      }
+    }
+
+    /* ===== 拖拽占位 ===== */
+    .drag-placeholder {
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      min-height: 60px;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="app-header">
+    <div class="header-top">
+      <div>
+        <h1 class="app-title">项目看板</h1>
+        <p class="app-subtitle">拖拽卡片调整状态与顺序，所有变更自动保存。</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-primary" id="addTaskBtn" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          新建任务
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div id="alertContainer"></div>
+
+  <main class="app-main">
+    <div class="board" id="board" role="list" aria-label="任务看板">
+      <!-- 列由 JS 渲染 -->
+    </div>
+  </main>
+
+  <footer class="app-footer">
+    <span>任务看板 · 本地存储</span>
+    <span id="storageStatus" aria-live="polite"></span>
+  </footer>
+
+  <!-- 模态框 -->
+  <div class="modal-overlay" id="modalOverlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal">
+      <h2 id="modalTitle">新建任务</h2>
+      <form id="taskForm" novalidate>
+        <input type="hidden" id="taskId" value="">
+        <div class="form-group">
+          <label for="taskTitleInput">任务标题</label>
+          <input type="text" id="taskTitleInput" name="title" required maxlength="120" placeholder="例如：完成登录页设计" autocomplete="off" aria-describedby="titleError">
+          <div class="form-error" id="titleError" role="alert"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="taskPrioritySelect">优先级</label>
+            <select id="taskPrioritySelect" name="priority">
+              <option value="high">高</option>
+              <option value="medium" selected>中</option>
+              <option value="low">低</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="taskDueInput">截止日期</label>
+            <input type="date" id="taskDueInput" name="due" aria-describedby="dueError">
+            <div class="form-error" id="dueError" role="alert"></div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="taskColumnSelect">所属看板列</label>
+          <select id="taskColumnSelect" name="column">
+            <option value="todo">待办</option>
+            <option value="in-progress">进行中</option>
+            <option value="done">已完成</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="cancelModalBtn">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      'use strict';
+
+      /* ===== 安全存储层 ===== */
+      const STORAGE_KEY = 'kanban_tasks_v1';
+      let memoryStore = null;
+      let storageAvailable = true;
+
+      function safeGetItem(key) {
+        try {
+          const val = localStorage.getItem(key);
+          if (val !== null) {
+            memoryStore = val;
+          }
+          return val;
+        } catch (e) {
+          storageAvailable = false;
+          return memoryStore;
+        }
+      }
+
+      function safeSetItem(key, value) {
+        memoryStore = value;
+        try {
+          localStorage.setItem(key, value);
+        } catch (e) {
+          storageAvailable = false;
+        }
+      }
+
+      /* ===== 数据模型 ===== */
+      const COLUMNS = [
+        { id: 'todo', title: '待办' },
+        { id: 'in-progress', title: '进行中' },
+        { id: 'done', title: '已完成' }
+      ];
+
+      const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' };
+
+      let tasks = [];
+
+      function loadTasks() {
+        const raw = safeGetItem(STORAGE_KEY);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              tasks = parsed.filter(t => t && typeof t.id === 'string' && typeof t.title === 'string');
+            }
+          } catch (e) {
+            tasks = [];
+          }
+        }
+        if (tasks.length === 0) {
+          tasks = seedTasks();
+          persist();
+        }
+      }
+
+      function seedTasks() {
+        return [
+          { id: 't1', title: '梳理需求文档与验收标准', priority: 'high', due: futureDate(3), column: 'todo', order: 0 },
+          { id: 't2', title: '设计系统组件库搭建', priority: 'medium', due: futureDate(7), column: 'todo', order: 1 },
+          { id: 't3', title: '登录页交互稿评审', priority: 'high', due: futureDate(1), column: 'in-progress', order: 0 },
+          { id: 't4', title: 'API 接口联调', priority: 'medium', due: futureDate(5), column: 'in-progress', order: 1 },
+          { id: 't5', title: '项目初始化与仓库配置', priority: 'low', due: futureDate(-2), column: 'done', order: 0 }
+        ];
+      }
+
+      function futureDate(days) {
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        return d.toISOString().slice(0, 10);
+      }
+
+      function persist() {
+        safeSetItem(STORAGE_KEY, JSON.stringify(tasks));
+        updateStorageStatus();
+      }
+
+      function updateStorageStatus() {
+        const el = document.getElementById('storageStatus');
+        if (!storageAvailable) {
+          el.textContent = '存储不可用 · 数据仅保存在当前会话';
+        } else {
+          el.textContent = '';
+        }
+      }
+
+      /* ===== 工具函数 ===== */
+      function uid() {
+        return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      }
+
+      function getTasksByColumn(colId) {
+        return tasks
+          .filter(t => t.column === colId)
+          .sort((a, b) => a.order - b.order);
+      }
+
+      function isOverdue(dueStr) {
+        if (!dueStr) return false;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const due = new Date(dueStr + 'T00:00:00');
+        return due < today;
+      }
+
+      function formatDate(dateStr) {
+        if (!dateStr) return '';
+        const parts = dateStr.split('-');
+        if (parts.length !== 3) return dateStr;
+        return parts[1] + '/' + parts[2];
+      }
+
+      /* ===== 渲染 ===== */
+      const boardEl = document.getElementById('board');
+
+      function render() {
+        boardEl.innerHTML = '';
+        COLUMNS.forEach(col => {
+          const colTasks = getTasksByColumn(col.id);
+          const columnEl = document.createElement('div');
+          columnEl.className = 'column';
+          columnEl.dataset.columnId = col.id;
+          columnEl.setAttribute('role', 'listitem');
+
+          // 列头
+          const headerEl = document.createElement('div');
+          headerEl.className = 'column-header';
+          headerEl.innerHTML = `
+            <span class="column-title">${col.title}</span>
+            <span class="column-count">${colTasks.length}</span>
+          `;
+          columnEl.appendChild(headerEl);
+
+          // 列体
+          const bodyEl = document.createElement('div');
+          bodyEl.className = 'column-body';
+          bodyEl.dataset.columnId = col.id;
+          bodyEl.setAttribute('role', 'list');
+          bodyEl.setAttribute('aria-label', col.title + '任务列表');
+
+          if (colTasks.length === 0) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'empty-state';
+            emptyEl.innerHTML = `
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <line x1="9" y1="9" x2="15" y2="15"/>
+                <line x1="15" y1="9" x2="9" y2="15"/>
+              </svg>
+              <p>这里还没有任务，点击「新建任务」开始规划。</p>
+            `;
+            bodyEl.appendChild(emptyEl);
+          } else {
+            colTasks.forEach(task => {
+              bodyEl.appendChild(createTaskCard(task));
+            });
+          }
+
+          // 拖拽事件
+          setupDropZone(bodyEl, col.id);
+
+          columnEl.appendChild(bodyEl);
+          boardEl.appendChild(columnEl);
+        });
+      }
+
+      function createTaskCard(task) {
+        const card = document.createElement('div');
+        card.className = 'task-card';
+        card.draggable = true;
+        card.dataset.taskId = task.id;
+        card.setAttribute('role', 'listitem');
+        card.setAttribute('tabindex', '0');
+        card.setAttribute('aria-label', task.title);
+
+        const overdue = isOverdue(task.due);
+
+        card.innerHTML = `
+          <div class="task-card-header">
+            <span class="task-title">${escapeHtml(task.title)}</span>
+            <div class="task-actions">
+              <button type="button" class="edit-btn" aria-label="编辑任务：${escapeHtml(task.title)}" title="编辑">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                </svg>
+              </button>
+              <button type="button" class="delete-btn" aria-label="删除任务：${escapeHtml(task.title)}" title="删除">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="task-meta">
+            <span class="priority-badge priority-${task.priority}">${PRIORITY_LABELS[task.priority] || task.priority}</span>
+            ${task.due ? `<span class="due-date${overdue ? ' overdue' : ''}">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+              </svg>
+              ${formatDate(task.due)}${overdue ? ' · 已逾期' : ''}
+            </span>` : ''}
+          </div>
+        `;
+
+        // 编辑按钮
+        card.querySelector('.edit-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          openModal(task);
+        });
+
+        // 删除按钮
+        card.querySelector('.delete-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (confirm('确定删除任务「' + task.title + '」吗？')) {
+            tasks = tasks.filter(t => t.id !== task.id);
+            persist();
+            render();
+          }
+        });
+
+        // 拖拽事件
+        card.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', task.id);
+          e.dataTransfer.effectAllowed = 'move';
+          card.classList.add('dragging');
+          requestAnimationFrame(() => card.classList.add('drag-ghost'));
+        });
+
+        card.addEventListener('dragend', () => {
+          card.classList.remove('dragging', 'drag-ghost');
+          document.querySelectorAll('.column.drag-over, .column-body.drag-over').forEach(el => {
+            el.classList.remove('drag-over');
+          });
+        });
+
+        // 键盘操作：Enter 编辑
+        card.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.target.closest('button')) {
+            e.preventDefault();
+            openModal(task);
+          }
+        });
+
+        return card;
+      }
+
+      function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      /* ===== 拖拽放置 ===== */
+      function setupDropZone(bodyEl, colId) {
+        bodyEl.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          bodyEl.classList.add('drag-over');
+          const columnEl = bodyEl.closest('.column');
+          if (columnEl) columnEl.classList.add('drag-over');
+        });
+
+        bodyEl.addEventListener('dragleave', (e) => {
+          if (!bodyEl.contains(e.relatedTarget)) {
+            bodyEl.classList.remove('drag-over');
+            const columnEl = bodyEl.closest('.column');
+            if (columnEl) columnEl.classList.remove('drag-over');
+          }
+        });
+
+        bodyEl.addEventListener('drop', (e) => {
+          e.preventDefault();
+          bodyEl.classList.remove('drag-over');
+          const columnEl = bodyEl.closest('.column');
+          if (columnEl) columnEl.classList.remove('drag-over');
+
+          const taskId = e.dataTransfer.getData('text/plain');
+          if (!taskId) return;
+
+          const draggedTask = tasks.find(t => t.id === taskId);
+          if (!draggedTask) return;
+
+          // 找到放置位置
+          const afterElement = getDragAfterElement(bodyEl, e.clientY);
+          const colTasks = getTasksByColumn(colId).filter(t => t.id !== taskId);
+
+          let newOrder;
+          if (afterElement) {
+            const afterTask = tasks.find(t => t.id === afterElement.dataset.taskId);
+            if (afterTask) {
+              newOrder = afterTask.order;
+            } else {
+              newOrder = colTasks.length;
+            }
+          } else {
+            newOrder = colTasks.length;
+          }
+
+          // 更新列
+          draggedTask.column = colId;
+
+          // 重新排序该列
+          const updatedColTasks = getTasksByColumn(colId).filter(t => t.id !== taskId);
+          updatedColTasks.splice(newOrder, 0, draggedTask);
+          updatedColTasks.forEach((t, i) => {
+            t.order = i;
+          });
+
+          // 如果跨列，原列需要重新排序
+          const otherColTasks = tasks.filter(t => t.column !== colId && t.id !== taskId);
+          const otherCols = [...new Set(otherColTasks.map(t => t.column))];
+          otherCols.forEach(cid => {
+            const colT = getTasksByColumn(cid);
+            colT.forEach((t, i) => {
+              t.order = i;
+            });
+          });
+
+          persist();
+          render();
+        });
+      }
+
+      function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('.task-card:not(.dragging)')];
+        return draggableElements.reduce((closest, child) => {
+          const box = child.getBoundingClientRect();
+          const offset = y - box.top - box.height / 2;
+          if (offset < 0 && offset > closest.offset) {
+            return { offset: offset, element: child };
+          } else {
+            return closest;
+          }
+        }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+      }
+
+      /* ===== 模态框逻辑 ===== */
+      const modalOverlay = document.getElementById('modalOverlay');
+      const modalTitle = document.getElementById('modalTitle');
+      const taskForm = document.getElementById('taskForm');
+      const taskIdInput = document.getElementById('taskId');
+      const taskTitleInput = document.getElementById('taskTitleInput');
+      const taskPrioritySelect = document.getElementById('taskPrioritySelect');
+      const taskDueInput = document.getElementById('taskDueInput');
+      const taskColumnSelect = document.getElementById('taskColumnSelect');
+      const titleError = document.getElementById('titleError');
+      const dueError = document.getElementById('dueError');
+
+      let editingTaskId = null;
+
+      function openModal(task) {
+        editingTaskId = task ? task.id : null;
+        modalTitle.textContent = task ? '编辑任务' : '新建任务';
+        taskIdInput.value = task ? task.id : '';
+        taskTitleInput.value = task ? task.title : '';
+        taskPrioritySelect.value = task ? task.priority : 'medium';
+        taskDueInput.value = task ? (task.due || '') : '';
+        taskColumnSelect.value = task ? task.column : 'todo';
+
+        // 清除错误
+        titleError.classList.remove('visible');
+        titleError.textContent = '';
+        dueError.classList.remove('visible');
+        dueError.textContent = '';
+        taskTitleInput.removeAttribute('aria-invalid');
+        taskDueInput.removeAttribute('aria-invalid');
+
+        modalOverlay.classList.add('open');
+        setTimeout(() => taskTitleInput.focus(), 100);
+      }
+
+      function closeModal() {
+        modalOverlay.classList.remove('open');
+        editingTaskId = null;
+      }
+
+      // 校验
+      function validateTitle() {
+        const val = taskTitleInput.value.trim();
+        if (!val) {
+          titleError.textContent = '请输入任务标题。';
+          titleError.classList.add('visible');
+          taskTitleInput.setAttribute('aria-invalid', 'true');
+          return false;
+        }
+        titleError.classList.remove('visible');
+        titleError.textContent = '';
+        taskTitleInput.removeAttribute('aria-invalid');
+        return true;
+      }
+
+      function validateDue() {
+        const val = taskDueInput.value;
+        if (val) {
+          const d = new Date(val + 'T00:00:00');
+          if (isNaN(d.getTime())) {
+            dueError.textContent = '日期格式无效，请重新选择。';
+            dueError.classList.add('visible');
+            taskDueInput.setAttribute('aria-invalid', 'true');
+            return false;
+          }
+        }
+        dueError.classList.remove('visible');
+        dueError.textContent = '';
+        taskDueInput.removeAttribute('aria-invalid');
+        return true;
+      }
+
+      // 失焦校验
+      taskTitleInput.addEventListener('blur', validateTitle);
+      taskDueInput.addEventListener('blur', validateDue);
+
+      // 输入时实时重校验（如果已报错）
+      taskTitleInput.addEventListener('input', () => {
+        if (titleError.classList.contains('visible')) {
+          validateTitle();
+        }
+      });
+      taskDueInput.addEventListener('input', () => {
+        if (dueError.classList.contains('visible')) {
+          validateDue();
+        }
+      });
+
+      // 表单提交
+      taskForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const titleOk = validateTitle();
+        const dueOk = validateDue();
+        if (!titleOk || !dueOk) return;
+
+        const title = taskTitleInput.value.trim();
+        const priority = taskPrioritySelect.value;
+        const due = taskDueInput.value || '';
+        const column = taskColumnSelect.value;
+
+        if (editingTaskId) {
+          // 编辑
+          const task = tasks.find(t => t.id === editingTaskId);
+          if (task) {
+            const oldColumn = task.column;
+            task.title = title;
+            task.priority = priority;
+            task.due = due;
+            task.column = column;
+
+            // 如果列变了，重新排序
+            if (oldColumn !== column) {
+              const oldColTasks = getTasksByColumn(oldColumn);
+              oldColTasks.forEach((t, i) => { t.order = i; });
+              task.order = getTasksByColumn(column).length;
+            }
+          }
+        } else {
+          // 新建
+          const newTask = {
+            id: uid(),
+            title: title,
+            priority: priority,
+            due: due,
+            column: column,
+            order: getTasksByColumn(column).length
+          };
+          tasks.push(newTask);
+        }
+
+        persist();
+        render();
+        closeModal();
+      });
+
+      // 取消
+      document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
+
+      // 点击遮罩关闭
+      modalOverlay.addEventListener('click', (e) => {
+        if (e.target === modalOverlay) closeModal();
+      });
+
+      // ESC 关闭
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modalOverlay.classList.contains('open')) {
+          closeModal();
+        }
+      });
+
+      // 新建按钮
+      document.getElementById('addTaskBtn').addEventListener('click', () => openModal(null));
+
+      /* ===== 提示条 ===== */
+      function showAlert(message, type) {
+        const container = document.getElementById('alertContainer');
+        const bar = document.createElement('div');
+        bar.className = 'alert-bar';
+        bar.setAttribute('role', 'alert');
+        bar.innerHTML = `
+          <span>${escapeHtml(message)}</span>
+          <button type="button" aria-label="关闭提示">&times;</button>
+        `;
+        bar.querySelector('button').addEventListener('click', () => bar.remove());
+        container.appendChild(bar);
+      }
+
+      /* ===== 初始化 ===== */
+      function init() {
+        loadTasks();
+        render();
+        updateStorageStatus();
+
+        // 存储不可用时显示提示条
+        if (!storageAvailable) {
+          showAlert('浏览器存储不可用（可能处于隐私模式或沙箱环境），数据仅保存在当前会话，关闭页面后将丢失。');
+        }
+      }
+
+      init();
+    })();
+  </script>
+</body>
+</html>

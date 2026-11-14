@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>读书笔记</title>
+  <style>
+    /* ---------- 温暖编辑 · 纸面杂志感 ---------- */
+    :root {
+      --bg: #fbf7f0;
+      --surface: #fffdf8;
+      --fg: #1f1a16;
+      --muted: #7d7168;
+      --border: #ded3c5;
+      --accent: #9a5a2f;
+      --radius: 2px;
+      --font-serif: Georgia, 'Times New Roman', 'Songti SC', 'SimSun', serif;
+      --font-sans: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--fg);
+      font-family: var(--font-sans);
+      line-height: 1.7;
+      padding: 2rem 1.5rem 4rem;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .app {
+      max-width: 65ch;
+      width: 100%;
+    }
+
+    /* ---------- 头部 ---------- */
+    header {
+      margin-bottom: 2.5rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 1.25rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: 2.4rem;
+      font-weight: 400;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+      color: var(--fg);
+      margin-bottom: 0.25rem;
+    }
+
+    .subhead {
+      font-size: 1rem;
+      color: var(--muted);
+      font-style: italic;
+      font-family: var(--font-serif);
+      margin-bottom: 1.25rem;
+    }
+
+    /* 主操作按钮 */
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--accent);
+      color: #fffdf8;
+      border: none;
+      padding: 0.6rem 1.2rem;
+      font-size: 0.9rem;
+      font-family: var(--font-sans);
+      font-weight: 500;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 150ms ease, transform 150ms ease;
+      letter-spacing: 0.02em;
+      min-height: 44px;
+    }
+
+    .btn-primary:hover {
+      background: #7e4825;
+    }
+
+    .btn-primary:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .btn-primary svg {
+      width: 18px;
+      height: 18px;
+      stroke-width: 1.8;
+    }
+
+    /* ---------- 提示条 ---------- */
+    .banner {
+      background: #f5e6d9;
+      border-left: 3px solid var(--accent);
+      padding: 0.75rem 1rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+      color: var(--fg);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-radius: var(--radius);
+    }
+
+    .banner button {
+      background: none;
+      border: none;
+      font-size: 1.2rem;
+      cursor: pointer;
+      color: var(--muted);
+      padding: 0 0.25rem;
+      line-height: 1;
+    }
+
+    /* ---------- 统计摘要 ---------- */
+    .stats {
+      display: flex;
+      gap: 2rem;
+      margin-bottom: 2rem;
+      font-family: var(--font-serif);
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .stats span {
+      color: var(--fg);
+      font-weight: 600;
+      font-size: 1.2rem;
+      font-family: var(--font-sans);
+      margin-right: 0.2rem;
+    }
+
+    /* ---------- 书籍列表 ---------- */
+    .book-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-bottom: 2.5rem;
+    }
+
+    .book-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      padding: 1.25rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+      transition: background 150ms ease;
+    }
+
+    .book-item:hover {
+      background: rgba(222, 211, 197, 0.15);
+    }
+
+    .book-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .book-title {
+      font-family: var(--font-serif);
+      font-size: 1.25rem;
+      font-weight: 600;
+      line-height: 1.4;
+      color: var(--fg);
+      margin-bottom: 0.15rem;
+      word-break: break-word;
+    }
+
+    .book-author {
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+      font-style: italic;
+      font-family: var(--font-serif);
+    }
+
+    .book-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 0.1rem 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-weight: 500;
+      color: var(--muted);
+      background: var(--surface);
+    }
+
+    .status-badge.reading {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .rating {
+      display: flex;
+      align-items: center;
+      gap: 0.2rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .rating svg {
+      width: 14px;
+      height: 14px;
+      fill: var(--accent);
+      stroke: none;
+    }
+
+    .rating .empty-star {
+      fill: var(--border);
+    }
+
+    /* 操作按钮组 */
+    .actions {
+      display: flex;
+      gap: 0.25rem;
+      flex-shrink: 0;
+    }
+
+    .icon-btn {
+      background: none;
+      border: 1px solid transparent;
+      padding: 0.35rem;
+      cursor: pointer;
+      color: var(--muted);
+      border-radius: var(--radius);
+      transition: color 150ms ease, border-color 150ms ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 32px;
+      min-height: 32px;
+    }
+
+    .icon-btn:hover {
+      color: var(--fg);
+      border-color: var(--border);
+    }
+
+    .icon-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .icon-btn svg {
+      width: 18px;
+      height: 18px;
+      stroke-width: 1.6;
+    }
+
+    /* ---------- 空状态 ---------- */
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      margin-bottom: 2rem;
+    }
+
+    .empty-state p {
+      font-family: var(--font-serif);
+      font-size: 1.2rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+      font-style: italic;
+    }
+
+    /* ---------- 表单弹层 ---------- */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(31, 26, 22, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 150ms ease;
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      max-width: 480px;
+      width: 100%;
+      padding: 2rem 1.75rem;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+      transform: translateY(8px);
+      transition: transform 150ms ease;
+    }
+
+    .modal-overlay.open .modal {
+      transform: translateY(0);
+    }
+
+    .modal h2 {
+      font-family: var(--font-serif);
+      font-size: 1.6rem;
+      font-weight: 400;
+      margin-bottom: 1.5rem;
+      color: var(--fg);
+    }
+
+    .field {
+      margin-bottom: 1.25rem;
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      font-family: var(--font-sans);
+      font-size: 0.95rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--fg);
+      transition: border-color 150ms ease;
+      min-height: 44px;
+    }
+
+    .field input:focus,
+    .field select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .field input:user-invalid,
+    .field select:user-invalid {
+      border-color: #b33a3a;
+    }
+
+    .field .error-msg {
+      font-size: 0.75rem;
+      color: #b33a3a;
+      margin-top: 0.25rem;
+      display: none;
+    }
+
+    .field input:user-invalid ~ .error-msg,
+    .field select:user-invalid ~ .error-msg {
+      display: block;
+    }
+
+    .form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
+      margin-top: 1.75rem;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      padding: 0.6rem 1.2rem;
+      font-size: 0.9rem;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-family: var(--font-sans);
+      transition: background 150ms ease;
+      min-height: 44px;
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg);
+    }
+
+    .btn-secondary:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* ---------- 删除确认 ---------- */
+    .confirm-text {
+      font-size: 0.95rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.7;
+    }
+
+    .confirm-text strong {
+      color: var(--fg);
+      font-weight: 600;
+    }
+
+    /* ---------- 响应式 ---------- */
+    @media (max-width: 480px) {
+      body {
+        padding: 1.25rem 1rem 3rem;
+      }
+      h1 {
+        font-size: 1.9rem;
+      }
+      .book-item {
+        flex-wrap: wrap;
+      }
+      .actions {
+        margin-left: auto;
+      }
+      .stats {
+        gap: 1.25rem;
+        font-size: 0.85rem;
+      }
+    }
+
+    /* 减少动效 */
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* 隐藏类 */
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>读书笔记</h1>
+      <p class="subhead">每一本读过的书，都留下痕迹</p>
+      <button class="btn-primary" id="addBtn" aria-label="新增书籍">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        新增书籍
+      </button>
+    </header>
+
+    <div id="storageBanner" class="banner hidden" role="alert">
+      <span>存储不可用，数据仅保存在当前会话中。</span>
+      <button id="dismissBanner" aria-label="关闭提示">×</button>
+    </div>
+
+    <div class="stats" id="stats" aria-live="polite">
+      <span id="statTotal">0</span> 本藏书
+      <span id="statReading">0</span> 在读
+    </div>
+
+    <main>
+      <ul class="book-list" id="bookList" aria-label="书籍列表"></ul>
+      <div class="empty-state hidden" id="emptyState">
+        <p>还没有书籍，从第一本开始吧。</p>
+        <button class="btn-primary" id="emptyAddBtn">添加第一本书</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- 新增/编辑弹层 -->
+  <div class="modal-overlay" id="modalOverlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal">
+      <h2 id="modalTitle">新增书籍</h2>
+      <form id="bookForm" novalidate>
+        <input type="hidden" id="bookId" value="">
+        <div class="field">
+          <label for="titleInput">书名</label>
+          <input type="text" id="titleInput" name="title" required maxlength="120" placeholder="例如：百年孤独" aria-describedby="titleError">
+          <div class="error-msg" id="titleError" role="alert">请填写书名</div>
+        </div>
+        <div class="field">
+          <label for="authorInput">作者</label>
+          <input type="text" id="authorInput" name="author" required maxlength="80" placeholder="例如：加西亚·马尔克斯" aria-describedby="authorError">
+          <div class="error-msg" id="authorError" role="alert">请填写作者</div>
+        </div>
+        <div class="field">
+          <label for="statusSelect">阅读状态</label>
+          <select id="statusSelect" name="status" required aria-describedby="statusError">
+            <option value="想读">想读</option>
+            <option value="在读">在读</option>
+            <option value="已读">已读</option>
+          </select>
+          <div class="error-msg" id="statusError" role="alert">请选择状态</div>
+        </div>
+        <div class="field">
+          <label for="ratingSelect">评分</label>
+          <select id="ratingSelect" name="rating" required aria-describedby="ratingError">
+            <option value="1">★☆☆☆☆ (1)</option>
+            <option value="2">★★☆☆☆ (2)</option>
+            <option value="3">★★★☆☆ (3)</option>
+            <option value="4">★★★★☆ (4)</option>
+            <option value="5">★★★★★ (5)</option>
+          </select>
+          <div class="error-msg" id="ratingError" role="alert">请选择评分</div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-secondary" id="cancelBtn">取消</button>
+          <button type="submit" class="btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 删除确认弹层 -->
+  <div class="modal-overlay" id="deleteOverlay" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
+    <div class="modal">
+      <h2 id="deleteTitle">确认删除</h2>
+      <p class="confirm-text" id="deleteConfirmText">确定要删除这本书吗？此操作不可撤销。</p>
+      <div class="form-actions">
+        <button type="button" class="btn-secondary" id="cancelDeleteBtn">取消</button>
+        <button type="button" class="btn-primary" id="confirmDeleteBtn" style="background:#b33a3a;">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      'use strict';
+
+      // ---------- 安全存储层 ----------
+      const STORAGE_KEY = 'reading_notes_books';
+      let memoryStore = null; // 内存兜底
+
+      function safeRead() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (raw === null) return [];
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+          // 存储不可用，降级到内存
+          if (memoryStore === null) memoryStore = [];
+          return memoryStore;
+        }
+      }
+
+      function safeWrite(books) {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
+          // 写入成功也同步内存，以防后续读取失败
+          memoryStore = books;
+        } catch (e) {
+          // 降级到内存
+          memoryStore = books;
+          showStorageBanner();
+        }
+      }
+
+      // 初始化数据
+      let books = safeRead();
+      // 如果 localStorage 不可用，memoryStore 可能为 null，但 safeRead 已处理
+      if (memoryStore === null) memoryStore = books;
+
+      // 存储提示条
+      let bannerDismissed = false;
+      function showStorageBanner() {
+        if (bannerDismissed) return;
+        const banner = document.getElementById('storageBanner');
+        if (banner) banner.classList.remove('hidden');
+      }
+
+      document.getElementById('dismissBanner').addEventListener('click', function() {
+        bannerDismissed = true;
+        document.getElementById('storageBanner').classList.add('hidden');
+      });
+
+      // ---------- DOM 引用 ----------
+      const bookListEl = document.getElementById('bookList');
+      const emptyStateEl = document.getElementById('emptyState');
+      const statsTotal = document.getElementById('statTotal');
+      const statsReading = document.getElementById('statReading');
+      const modalOverlay = document.getElementById('modalOverlay');
+      const modalTitle = document.getElementById('modalTitle');
+      const bookForm = document.getElementById('bookForm');
+      const bookIdInput = document.getElementById('bookId');
+      const titleInput = document.getElementById('titleInput');
+      const authorInput = document.getElementById('authorInput');
+      const statusSelect = document.getElementById('statusSelect');
+      const ratingSelect = document.getElementById('ratingSelect');
+      const addBtn = document.getElementById('addBtn');
+      const emptyAddBtn = document.getElementById('emptyAddBtn');
+      const cancelBtn = document.getElementById('cancelBtn');
+      const deleteOverlay = document.getElementById('deleteOverlay');
+      const deleteConfirmText = document.getElementById('deleteConfirmText');
+      const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
+      const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
+
+      let pendingDeleteId = null;
+
+      // ---------- 渲染 ----------
+      function render() {
+        // 更新统计
+        statsTotal.textContent = books.length;
+        const readingCount = books.filter(b => b.status === '在读').length;
+        statsReading.textContent = readingCount;
+
+        // 空状态
+        if (books.length === 0) {
+          bookListEl.innerHTML = '';
+          emptyStateEl.classList.remove('hidden');
+          return;
+        }
+        emptyStateEl.classList.add('hidden');
+
+        // 生成列表
+        const fragment = document.createDocumentFragment();
+        books.forEach(book => {
+          const li = document.createElement('li');
+          li.className = 'book-item';
+          li.dataset.id = book.id;
+
+          // 信息区
+          const infoDiv = document.createElement('div');
+          infoDiv.className = 'book-info';
+
+          const titleEl = document.createElement('div');
+          titleEl.className = 'book-title';
+          titleEl.textContent = book.title || '（无书名）';
+
+          const authorEl = document.createElement('div');
+          authorEl.className = 'book-author';
+          authorEl.textContent = book.author || '（未知作者）';
+
+          const metaDiv = document.createElement('div');
+          metaDiv.className = 'book-meta';
+
+          const statusSpan = document.createElement('span');
+          statusSpan.className = 'status-badge' + (book.status === '在读' ? ' reading' : '');
+          statusSpan.textContent = book.status || '想读';
+
+          const ratingSpan = document.createElement('span');
+          ratingSpan.className = 'rating';
+          const ratingVal = parseInt(book.rating, 10) || 0;
+          for (let i = 1; i <= 5; i++) {
+            const star = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            star.setAttribute('viewBox', '0 0 24 24');
+            star.setAttribute('fill', i <= ratingVal ? 'currentColor' : 'none');
+            star.setAttribute('stroke', 'currentColor');
+            star.setAttribute('stroke-width', '1.6');
+            if (i > ratingVal) {
+              star.classList.add('empty-star');
+            }
+            const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+            polygon.setAttribute('points', '12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2');
+            star.appendChild(polygon);
+            ratingSpan.appendChild(star);
+          }
+
+          metaDiv.appendChild(statusSpan);
+          metaDiv.appendChild(ratingSpan);
+
+          infoDiv.appendChild(titleEl);
+          infoDiv.appendChild(authorEl);
+          infoDiv.appendChild(metaDiv);
+
+          // 操作区
+          const actionsDiv = document.createElement('div');
+          actionsDiv.className = 'actions';
+
+          const editBtn = document.createElement('button');
+          editBtn.className = 'icon-btn';
+          editBtn.setAttribute('aria-label', '编辑《' + (book.title || '') + '》');
+          editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>';
+          editBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            openEditModal(book.id);
+          });
+
+          const deleteBtn = document.createElement('button');
+          deleteBtn.className = 'icon-btn';
+          deleteBtn.setAttribute('aria-label', '删除《' + (book.title || '') + '》');
+          deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>';
+          deleteBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            openDeleteModal(book.id);
+          });
+
+          actionsDiv.appendChild(editBtn);
+          actionsDiv.appendChild(deleteBtn);
+
+          li.appendChild(infoDiv);
+          li.appendChild(actionsDiv);
+          fragment.appendChild(li);
+        });
+
+        bookListEl.innerHTML = '';
+        bookListEl.appendChild(fragment);
+      }
+
+      // ---------- 打开新增弹层 ----------
+      function openAddModal() {
+        modalTitle.textContent = '新增书籍';
+        bookIdInput.value = '';
+        titleInput.value = '';
+        authorInput.value = '';
+        statusSelect.value = '想读';
+        ratingSelect.value = '3';
+        // 清除校验状态
+        [titleInput, authorInput, statusSelect, ratingSelect].forEach(el => {
+          el.removeAttribute('aria-invalid');
+        });
+        modalOverlay.classList.add('open');
+        titleInput.focus();
+      }
+
+      // ---------- 打开编辑弹层 ----------
+      function openEditModal(id) {
+        const book = books.find(b => b.id === id);
+        if (!book) return;
+        modalTitle.textContent = '编辑书籍';
+        bookIdInput.value = book.id;
+        titleInput.value = book.title || '';
+        authorInput.value = book.author || '';
+        statusSelect.value = book.status || '想读';
+        ratingSelect.value = String(book.rating || 3);
+        [titleInput, authorInput, statusSelect, ratingSelect].forEach(el => {
+          el.removeAttribute('aria-invalid');
+        });
+        modalOverlay.classList.add('open');
+        titleInput.focus();
+      }
+
+      // ---------- 关闭弹层 ----------
+      function closeModal() {
+        modalOverlay.classList.remove('open');
+      }
+
+      // ---------- 打开删除确认 ----------
+      function openDeleteModal(id) {
+        const book = books.find(b => b.id === id);
+        if (!book) return;
+        pendingDeleteId = id;
+        deleteConfirmText.innerHTML = '确定要删除 <strong>《' + escapeHtml(book.title || '无书名') + '》</strong> 吗？此操作不可撤销。';
+        deleteOverlay.classList.add('open');
+        confirmDeleteBtn.focus();
+      }
+
+      function closeDeleteModal() {
+        deleteOverlay.classList.remove('open');
+        pendingDeleteId = null;
+      }
+
+      // 简单转义
+      function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      // ---------- 表单提交 ----------
+      bookForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        // 手动校验
+        let valid = true;
+        if (!titleInput.value.trim()) {
+          titleInput.setAttribute('aria-invalid', 'true');
+          valid = false;
+        } else {
+          titleInput.removeAttribute('aria-invalid');
+        }
+        if (!authorInput.value.trim()) {
+          authorInput.setAttribute('aria-invalid', 'true');
+          valid = false;
+        } else {
+          authorInput.removeAttribute('aria-invalid');
+        }
+        if (!statusSelect.value) {
+          statusSelect.setAttribute('aria-invalid', 'true');
+          valid = false;
+        } else {
+          statusSelect.removeAttribute('aria-invalid');
+        }
+        if (!ratingSelect.value) {
+          ratingSelect.setAttribute('aria-invalid', 'true');
+          valid = false;
+        } else {
+          ratingSelect.removeAttribute('aria-invalid');
+        }
+
+        if (!valid) {
+          // 聚焦第一个错误
+          const firstInvalid = bookForm.querySelector('[aria-invalid="true"]');
+          if (firstInvalid) firstInvalid.focus();
+          return;
+        }
+
+        const id = bookIdInput.value;
+        const title = titleInput.value.trim();
+        const author = authorInput.value.trim();
+        const status = statusSelect.value;
+        const rating = parseInt(ratingSelect.value, 10);
+
+        if (id) {
+          // 编辑
+          const index = books.findIndex(b => b.id === id);
+          if (index !== -1) {
+            books[index] = { ...books[index], title, author, status, rating };
+          }
+        } else {
+          // 新增
+          const newBook = {
+            id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            title,
+            author,
+            status,
+            rating
+          };
+          books.push(newBook);
+        }
+
+        safeWrite(books);
+        render();
+        closeModal();
+      });
+
+      // 失焦校验
+      titleInput.addEventListener('blur', function() {
+        if (!this.value.trim()) {
+          this.setAttribute('aria-invalid', 'true');
+        } else {
+          this.removeAttribute('aria-invalid');
+        }
+      });
+      titleInput.addEventListener('input', function() {
+        if (this.getAttribute('aria-invalid') === 'true' && this.value.trim()) {
+          this.removeAttribute('aria-invalid');
+        }
+      });
+
+      authorInput.addEventListener('blur', function() {
+        if (!this.value.trim()) {
+          this.setAttribute('aria-invalid', 'true');
+        } else {
+          this.removeAttribute('aria-invalid');
+        }
+      });
+      authorInput.addEventListener('input', function() {
+        if (this.getAttribute('aria-invalid') === 'true' && this.value.trim()) {
+          this.removeAttribute('aria-invalid');
+        }
+      });
+
+      // ---------- 事件绑定 ----------
+      addBtn.addEventListener('click', openAddModal);
+      emptyAddBtn.addEventListener('click', openAddModal);
+      cancelBtn.addEventListener('click', closeModal);
+      cancelDeleteBtn.addEventListener('click', closeDeleteModal);
+
+      confirmDeleteBtn.addEventListener('click', function() {
+        if (pendingDeleteId) {
+          books = books.filter(b => b.id !== pendingDeleteId);
+          safeWrite(books);
+          render();
+          closeDeleteModal();
+        }
+      });
+
+      // 点击遮罩关闭
+      modalOverlay.addEventListener('click', function(e) {
+        if (e.target === modalOverlay) closeModal();
+      });
+      deleteOverlay.addEventListener('click', function(e) {
+        if (e.target === deleteOverlay) closeDeleteModal();
+      });
+
+      // ESC 关闭
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+          if (modalOverlay.classList.contains('open')) closeModal();
+          if (deleteOverlay.classList.contains('open')) closeDeleteModal();
+        }
+      });
+
+      // ---------- 初始渲染 ----------
+      render();
+
+      // 如果存储不可用，显示提示条（但绝不阻断）
+      try {
+        localStorage.setItem('__test__', '1');
+        localStorage.removeItem('__test__');
+      } catch (e) {
+        showStorageBanner();
+      }
+    })();
+  </script>
+</body>
+</html>
