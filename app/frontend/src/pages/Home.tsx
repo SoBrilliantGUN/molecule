@@ -220,21 +220,38 @@ export default function Home() {
                     <div key={q.key}>
                       <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">{q.question}</label>
                       {q.type === 'select' && q.options.length ? (
-                        <select
-                          value={answers[q.key] ?? q.default}
-                          onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
-                          className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
-                        >
-                          {q.options.map((o) => (
-                            <option key={o} value={o}>
-                              {o}
-                            </option>
-                          ))}
-                        </select>
+                        <div>
+                          <input
+                            value={answers[q.key] ?? q.default}
+                            onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
+                            placeholder="选择或直接输入"
+                            className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
+                          />
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {q.options.map((o) => {
+                              const active = (answers[q.key] ?? q.default) === o;
+                              return (
+                                <button
+                                  key={o}
+                                  type="button"
+                                  onClick={() => setAnswers((prev) => ({ ...prev, [q.key]: o }))}
+                                  className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                                    active
+                                      ? 'border-primary bg-primary/10 text-primary'
+                                      : 'border-border bg-sunk text-muted-foreground hover:border-primary hover:text-primary'
+                                  }`}
+                                >
+                                  {o}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                       ) : (
                         <input
                           value={answers[q.key] ?? q.default}
                           onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
+                          placeholder="输入你的答案"
                           className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
                         />
                       )}
