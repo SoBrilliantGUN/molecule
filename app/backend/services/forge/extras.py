@@ -11,7 +11,6 @@ from services.forge import codegen, ops, repo
 from services.forge.budget import Budget
 from services.forge.gateway import GatewayError, RunContext
 from services.forge.util import DomainError, dumps, loads
-from services.forge.verify import side_effect_checks, slop_checks, slop_p0_messages
 
 logger = logging.getLogger(__name__)
 
@@ -22,27 +21,27 @@ RACE_MODELS = [m.strip() for m in os.environ.get("RACE_MODELS", "deepseek-ai/Dee
 
 
 async def _race_one(run_key: str, prompt: str, model: str) -> dict:
-    """Generate one candidate app for a model, emitting live ``race_model`` events."""
+    """Generate one candidate app for a model via the ReAct graph (per-model checkpoint)."""
     from services.forge import run_manager
-
-    async def emit(event_type: str, data: dict) -> None:
-        await run_manager.emit(run_key, event_type, data)
+    from services.forge.forge_react import generate_verified
 
     ctx = RunContext(run_key=f"{run_key}:{model}", project_id=None, budget=Budget())
+
+    async def emit_race(status: str, text: str = "", **extra) -> None:
+        await run_manager.emit(run_key, "race_model", {"model": model, "status": status, "text": text, **extra})
+
+    async def emit(event_type: str, data: dict) -> None:
+        # 把 ReAct 图内部的 stage/verify 事件映射成赛马进度事件（前端赛马页按 race_model 展示）。
+        await emit_race("running", data.get("text", ""))
+
     try:
-        await emit("race_model", {"model": model, "status": "running", "text": "生成 HTML…"})
-        out = await codegen.generate(ctx, prompt, model=model, provider="siliconflow")
-        # 赛马候选同样过确定性质量闸门（结构 + 反 AI 味 P0），否则会把坏 HTML 摆进对比让用户选。
-        violations = side_effect_checks(out["html"])
-        p0 = slop_p0_messages(slop_checks(out["html"]))
-        if violations or p0:
-            reason = "；".join((violations + p0)[:2])
-            await emit("race_model", {"model": model, "status": "error", "text": f"质量闸门未过：{reason}"})
-            return {"model": model, "ok": False, "error": f"质量闸门未过：{reason}"}
-        await emit("race_model", {"model": model, "status": "done", "title": out["title"], "html": out["html"]})
+        await emit_race("running", "生成 HTML…")
+        # 复用单路 ReAct 图（三校核验 + 回喂重生成），赛马产物与单路产物同质量；每路独立 checkpoint。
+        out = await generate_verified(ctx, prompt, None, model=model, emit=emit, provider="siliconflow")
+        await emit_race("done", title=out["title"], html=out["html"])
         return {"model": model, "ok": True, "title": out["title"], "html": out["html"]}
     except (DomainError, GatewayError) as exc:
-        await emit("race_model", {"model": model, "status": "error", "text": str(exc)[:200]})
+        await emit_race("error", str(exc)[:200])
         return {"model": model, "ok": False, "error": str(exc)[:200]}
 
 
@@ -50,7 +49,7 @@ async def _race_worker(run_key: str, race_id: int, prompt: str, models: list[str
     from services.forge import run_manager
 
     results = await asyncio.gather(*(_race_one(run_key, prompt, m) for m in models))
-    await repo.update(Races, race_id, results_json=dumps({"items": results}), status="done")
+    await repo.update(Races, race_id, results_json=dumps({"items": results, "models": models}), status="done")
     await run_manager.emit(run_key, "done", {"race_id": race_id})
 
 
@@ -70,13 +69,28 @@ async def start_race(prompt: str, models: list[str] | None = None, client_key: s
             race = existing[0]
             return {"id": race["id"], "run_key": f"race-{race['id']}", "prompt": race["prompt"], "status": race["status"], "models": models}
 
-    race = await repo.add(Races, prompt=prompt, results_json=dumps({"items": []}), status="running", selected_index=None, client_key=client_key)
+    race = await repo.add(Races, prompt=prompt, results_json=dumps({"items": [], "models": models}), status="running", selected_index=None, client_key=client_key)
     race_id = race["id"]
     run_key = f"race-{race_id}"
     # Reuse run_manager's SSE event store (keyed by run_key) for the race stream.
     await repo.add(AgentRuns, run_key=run_key, project_id=None, status="running", user_input=prompt[:2000])
     run_manager.start_run(run_key, _race_worker(run_key, race_id, prompt, models))
     return {"id": race_id, "run_key": run_key, "prompt": prompt, "status": "running", "models": models}
+
+
+async def resume_race(run_key: str, race_id: int) -> None:
+    """后端崩溃后重拉赛马：读 Races 行拿 prompt/models，重新 gather 每路（每路从 checkpoint 续跑）。
+
+    已完成的路其 checkpoint 在 SQLite，重新 ainvoke 会立即返回；未完成的路从断点续跑。
+    """
+    from services.forge import run_manager
+
+    race = await repo.get(Races, race_id)
+    if not race:
+        return
+    data = loads(race["results_json"], {})
+    models = data.get("models") or RACE_MODELS
+    run_manager.start_run(run_key, _race_worker(run_key, race_id, race["prompt"], models))
 
 
 async def select_race(race_id: int, model: str) -> dict:

@@ -18,7 +18,7 @@ aiosqlite>=0.20.0
 greenlet
 # LLM gateway (SiliconFlow, OpenAI-compatible)
 openai==2.16.0
-# Agent (LangGraph single-agent graph)
+# Agent orchestration (LangGraph StateGraph + SQLite checkpoint 断点续跑)
 langgraph>=0.2.0
-langchain-core>=0.3.0
+langgraph-checkpoint-sqlite>=2.0.0
 

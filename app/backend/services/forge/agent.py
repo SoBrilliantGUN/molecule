@@ -1,138 +1,21 @@
 """Forge agent：真正的生成入口是 `_run_forge`（异步 run + ReAct 三校核验）。
 
-注意：这里还保留了一条 LangGraph 直线图（intent → generate → save），但它**不是**当前
-前端走的路——前端统一走 `POST /runs` → `start_forge` → `_run_forge` → `generate_verified`。
-`chat` / `create_from_prompt`（对应 `POST /projects/{id}/chat`、`POST /projects`）是早期
-遗留的同步兼容路径，前端已不调用；图里的 `intent` 节点也不再路由（只给 build/iterate
-打个标签），两条路最终都进同一个 generate。保留它是为了沿用 StateGraph 编排结构作为
-演示叙事，但它的生成走的是 `codegen.generate` 单次直调，**未接三校核验**——若要继续
-留着，应把它也切到 `generate_verified`，否则是两条质量不一致的链路。
+前端统一走 `POST /runs` → `start_forge` → `_run_forge` → `_run_classified` →
+`generate_verified`（LangGraph StateGraph 编排 + SQLite checkpoint 断点续跑）。
+早期遗留的 LangGraph 直线图（intent → generate → save）及 `chat` / `create_from_prompt`
+同步兼容路径已删除。
 """
 
 import logging
-import uuid
-from operator import add
-from typing import Annotated, Any, TypedDict
-
-from langgraph.graph import END, START, StateGraph
 
 from models.agent_runs import AgentRuns
 from models.chat_messages import ChatMessages
-from services.forge import codegen, gateway, ops, repo, seed
-from services.forge.budget import Budget, BudgetExceeded
-from services.forge.gateway import GatewayError, RunContext
-from services.forge.util import DomainError, dumps
+from services.forge import codegen, ops, repo, seed
+from services.forge.budget import Budget
+from services.forge.gateway import RunContext
+from services.forge.util import dumps
 
 logger = logging.getLogger(__name__)
-
-
-class ForgeState(TypedDict, total=False):
-    message: str
-    project_id: int | None
-    current_html: str | None
-    intent: str
-    html: str
-    title: str
-    reply: str
-    run_key: str
-    events: Annotated[list[dict[str, str]], add]
-
-
-# ---------- nodes ----------
-
-async def _intent_node(state: ForgeState, ctx: RunContext) -> dict:
-    """给 build/iterate 打个标签（仅用于事件展示，不再路由——两条路都走同一 generate）。"""
-    message = state["message"]
-    if state.get("project_id") is not None:
-        intent = "iterate"
-    else:
-        intent = "build"
-    return {"intent": intent, "events": [{"kind": "intent", "text": "新建应用" if intent == "build" else "迭代修改"}]}
-
-
-async def _generate_node(state: ForgeState, ctx: RunContext) -> dict:
-    out = await codegen.generate(ctx, state["message"], state.get("current_html"))
-    return {"html": out["html"], "title": out["title"], "events": [{"kind": "generate", "text": "已生成单文件 HTML"}]}
-
-
-async def _save_node(state: ForgeState, ctx: RunContext) -> dict:
-    if state.get("project_id") is not None:
-        project = await ops.update_project_html(state["project_id"], state["html"], state.get("title") or "")
-        reply = "已根据你的修改重新生成应用，预览区已更新。"
-    else:
-        project = await ops.create_project(state["title"] or state["message"][:40], state["html"], description=state["message"][:200])
-        reply = f"已根据你的描述创建「{project['name']}」。继续告诉我要怎么改。"
-    return {"project_id": project["id"], "reply": reply, "events": [{"kind": "save", "text": f"已保存为应用 #{project['id']}"}]}
-
-
-def _build_graph() -> StateGraph:
-    g = StateGraph(ForgeState)
-
-    async def intent(state: ForgeState, config):
-        ctx = config["configurable"]["ctx"]
-        return await _intent_node(state, ctx)
-
-    async def generate(state: ForgeState, config):
-        ctx = config["configurable"]["ctx"]
-        return await _generate_node(state, ctx)
-
-    async def save(state: ForgeState, config):
-        ctx = config["configurable"]["ctx"]
-        return await _save_node(state, ctx)
-
-    g.add_node("intent", intent)
-    g.add_node("generate", generate)
-    g.add_node("save", save)
-    g.add_edge(START, "intent")
-    g.add_edge("intent", "generate")
-    g.add_edge("generate", "save")
-    g.add_edge("save", END)
-    return g
-
-
-# ---------- public entry points ----------
-
-async def _execute(state: ForgeState) -> dict:
-    ctx = RunContext(run_key=state.get("run_key") or uuid.uuid4().hex[:16], project_id=state.get("project_id"), budget=Budget())
-    state = {**state, "run_key": ctx.run_key, "events": state.get("events", [])}
-
-    graph = _build_graph().compile()
-    result = await graph.ainvoke(state, config={"configurable": {"ctx": ctx}})
-
-    await _record_run(ctx.run_key, state.get("project_id"), result, ctx)
-    return {
-        "run_key": ctx.run_key,
-        "status": "done",
-        "reply": result.get("reply", ""),
-        "intent": result.get("intent"),
-        "events": result.get("events", []),
-        "project_id": result.get("project_id"),
-        "usage": ctx.budget.snapshot(),
-    }
-
-
-async def _record_run(run_key: str, project_id: int | None, state: dict, ctx: RunContext) -> None:
-    rows = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
-    fields = dict(status="done", intent=state.get("intent"), checkpoint_json=dumps({k: v for k, v in state.items() if k != "history"}), usage_json=dumps(ctx.budget.snapshot()))
-    if rows:
-        await repo.update(AgentRuns, rows[0]["id"], **fields)
-    else:
-        await repo.add(AgentRuns, run_key=run_key, project_id=project_id, user_input=state.get("message", "")[:2000], **fields)
-
-
-async def create_from_prompt(prompt: str, model: str | None = None) -> dict:
-    """New app: one-liner -> single-file HTML -> project. Kept as the synchronous
-    compat path (POST /projects); the streaming path goes through start_forge."""
-    ctx = RunContext(run_key=uuid.uuid4().hex[:16], budget=Budget())
-    mock = seed.match_mock(prompt)
-    out = {"html": mock["html"], "title": mock["name"], "verify": {}} if mock else await _run_classified(ctx, _noop_emit, prompt, None, model)
-    project = await _persist_project(ctx, out, prompt, None)
-    return project
-
-
-async def _noop_emit(_type: str, _data: dict) -> None:
-    """Discard events in the synchronous compat path."""
-    return None
 
 
 async def start_forge(run_key: str, prompt: str, project_id: int | None, model: str | None) -> dict:
@@ -147,8 +30,9 @@ async def start_forge(run_key: str, prompt: str, project_id: int | None, model: 
 async def resume_forge(run_key: str) -> dict:
     """Re-run an interrupted run (status="running" after a crash).
 
-    The ReAct path generates in a single attempt (no mid-run checkpoint), so resume is
-    simply a fresh run from the stored user_input. Retired DAG stage checkpoints are gone.
+    The ReAct path is a LangGraph graph with a SQLite checkpointer keyed by run_key, so
+    resume re-enters the graph and continues from the most recent checkpoint (skipping
+    completed nodes) rather than regenerating from scratch.
     """
     rows = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
     row = rows[0] if rows else None
@@ -166,8 +50,6 @@ async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: s
     subscribers see progress live. Returns the final {project_id, status}.
     """
     from services.forge import run_manager
-    from services.forge.gateway import RunContext
-    from services.forge.budget import Budget
 
     ctx = RunContext(run_key=run_key, project_id=project_id, budget=Budget())
 
@@ -197,11 +79,9 @@ async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: s
         return {"project_id": project_id, "status": "error", "error": str(exc)}
 
 
-async def _run_classified(ctx, emit, prompt: str, project_id: int | None, model: str | None) -> dict:
-    """单次完整生成 + 三校核验（ReAct）。DAG 分阶段拼接片段已退役。
+async def _run_classified(ctx: RunContext, emit, prompt: str, project_id: int | None, model: str | None) -> dict:
+    """单次完整生成 + 三校核验（ReAct）。
 
-    之前按复杂度把新建/大改路由到 DAG，但 DAG 逐阶段拼接片段会产出「空 HTML / 半成品 /
-    无限补丁」，反而更糟。统一走 codegen.generate 一次产出完整单文件 HTML + 跨模型核验。
     current_html 为空（新建占位项目）视为无现有内容 → 全新生成；有内容 → 在其上迭代。
     """
     from services.forge.forge_react import generate_verified
@@ -225,18 +105,3 @@ async def _persist_project(ctx: RunContext, out: dict, prompt: str, project_id: 
     meta = {"usage": ctx.budget.snapshot(), "verify": out.get("verify", {})}
     await repo.add(ChatMessages, project_id=project["id"], role="assistant", content=f"已生成「{project['name']}」。", meta_json=dumps(meta))
     return project
-
-
-async def chat(project_id: int, message: str, model: str | None = None) -> dict:
-    """Iterate: new requirement applied on top of the existing HTML."""
-    project = await ops.get_project(project_id)
-    await repo.add(ChatMessages, project_id=project_id, role="user", content=message)
-    state: ForgeState = {
-        "message": message,
-        "project_id": project_id,
-        "current_html": project.get("html"),
-        "events": [],
-    }
-    out = await _execute(state)
-    await repo.add(ChatMessages, project_id=project_id, role="assistant", content=out["reply"], meta_json=dumps({"events": out["events"], "usage": out["usage"], "intent": out["intent"], "run_key": out["run_key"]}))
-    return out

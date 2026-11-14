@@ -17,7 +17,7 @@
               ③ 程序重算分 → 低于阈值则针对缺失项定向重生成（≤2 次）
 ```
 
-对应代码：`agent.py`（LangGraph 入口 + 落库）、`forge_react.py`（生成 + 三重校验）、
+对应代码：`agent.py`（异步 run 入口 + 落库）、`forge_react.py`（LangGraph 图 + 三重校验 + checkpoint）、
 `verify.py`（骨架校验 + 跨模型核验）、`codegen.py`（单文件 HTML 生成）。
 
 ## 二、为什么砍掉 DAG（实测问题）

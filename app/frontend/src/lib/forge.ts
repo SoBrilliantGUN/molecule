@@ -28,14 +28,6 @@ export interface ChatMessage {
   content: string;
   meta?: { events?: TraceEvent[]; usage?: Usage; intent?: string; run_key?: string };
 }
-export interface ChatResult {
-  run_key: string;
-  status: string;
-  reply: string;
-  intent: string | null;
-  events: TraceEvent[];
-  usage: Usage;
-}
 export interface SpecField {
   name: string;
   type: string;
@@ -159,12 +151,10 @@ export const forge = {
   projects: () => call<Project[]>('GET', '/projects'),
   spec: (prompt: string) => call<SpecResult>('POST', '/spec', { prompt }, 30_000),
   project: (id: number) => call<Project>('GET', `/projects/${id}`),
-  createProject: (body: { prompt?: string }) => call<Project>('POST', '/projects', body, LONG),
   deleteProject: (id: number) => call<{ ok: boolean }>('DELETE', `/projects/${id}`),
   publish: (id: number) => call<Project>('POST', `/projects/${id}/publish`, {}, 30_000),
   pubProject: (slug: string) => call<Project>('GET', `/pub/${slug}`),
   messages: (id: number) => call<ChatMessage[]>('GET', `/projects/${id}/messages`),
-  chat: (id: number, message: string) => call<ChatResult>('POST', `/projects/${id}/chat`, { message }, LONG),
 
   startRace: (prompt: string, client_key?: string) => call<RaceStart>('POST', '/races', { prompt, client_key }, LONG),
   races: () => call<Race[]>('GET', '/races'),

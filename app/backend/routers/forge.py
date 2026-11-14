@@ -42,16 +42,6 @@ def _project_row(project: dict) -> dict:
 
 # ---------- request bodies ----------
 
-class CreateProject(BaseModel):
-    prompt: Optional[str] = Field(default=None, max_length=4000)
-    model: Optional[str] = None
-
-
-class ChatBody(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
-    model: Optional[str] = None
-
-
 class RaceBody(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     models: Optional[list[str]] = None
@@ -84,17 +74,6 @@ async def projects() -> list[dict]:
         d["run_key"] = run_by_project.get(r["id"])
         out.append(d)
     return out
-
-
-@router.post("/projects")
-async def create_project(body: CreateProject) -> dict:
-    try:
-        if not body.prompt:
-            raise DomainError("请提供应用描述")
-        project = await agent.create_from_prompt(body.prompt, body.model)
-    except (DomainError, gateway.GatewayError) as exc:
-        raise _err(exc) from exc
-    return _project_row(project)
 
 
 @router.get("/projects/{project_id}")
@@ -149,14 +128,6 @@ async def delete_project(project_id: int) -> dict:
 async def messages(project_id: int) -> list[dict]:
     rows = await repo.find(ChatMessages, ChatMessages.project_id == project_id, order=ChatMessages.id, limit=200)
     return [{**r, "meta": loads(r.get("meta_json"), {}), "meta_json": None} for r in rows]
-
-
-@router.post("/projects/{project_id}/chat")
-async def chat(project_id: int, body: ChatBody) -> dict:
-    try:
-        return await agent.chat(project_id, body.message, body.model)
-    except (DomainError, gateway.GatewayError) as exc:
-        raise _err(exc) from exc
 
 
 # ---------- requirement understanding (pre-generation) ----------

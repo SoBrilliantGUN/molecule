@@ -28,6 +28,9 @@ services:
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
       FORGE_MAX_SECONDS: ${FORGE_MAX_SECONDS:-3600}
+      LANGGRAPH_CHECKPOINT_DB: /data/checkpoints.sqlite
+    volumes:
+      - checkpoints:/data
     depends_on:
       db:
         condition: service_healthy
@@ -42,3 +45,4 @@ services:
 
 volumes:
   pgdata:
+  checkpoints:

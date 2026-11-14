@@ -142,8 +142,10 @@ async def resume_interrupted_runs() -> int:
     """Requeue runs left in ``running`` after a crash (process restart).
 
     Called once at app startup: any row still marked ``running`` was interrupted mid-run,
-    so we re-register its task via agent.resume_forge. The ReAct path generates in a single
-    attempt (no mid-run checkpoint), so resume re-runs fresh from the stored user_input.
+    so we re-register its task. Single-app runs resume via agent.resume_forge; the ReAct
+    path is a LangGraph graph with a SQLite checkpointer keyed by run_key, so resume
+    continues from the most recent checkpoint instead of regenerating from scratch.
+    Race runs resume via extras.resume_race (per-model checkpoint).
     Returns the resumed count.
     """
     from services.forge import agent
@@ -155,15 +157,12 @@ async def resume_interrupted_runs() -> int:
         if not run_key or run_key in _live:
             continue
         if run_key.startswith("race-"):
-            # 赛马任务不能走单应用链路 resume_forge 续跑（会把赛马 prompt 当单应用重新生成，
-            # 凭空多出一个项目，且赛马本身卡在「生成中」）。中断的赛马直接标记结束。
-            await repo.update(AgentRuns, r["id"], status="error", result_json=dumps({"error": "赛马被重启中断"}))
-            from models.races import Races
+            # 赛马也支持 checkpoint 续跑：重拉 _race_worker，每路从各自 checkpoint 恢复
+            # （已完成路立即返回，未完成路从断点续跑），不再直接标 error 丢失。
+            from services.forge import extras
             race_id = run_key[len("race-"):]
             if race_id.isdigit():
-                race_row = await repo.get(Races, int(race_id))
-                if race_row and race_row.get("status") != "done":
-                    await repo.update(Races, int(race_id), status="done")
+                await extras.resume_race(run_key, int(race_id))
             continue
         start_run(run_key, agent.resume_forge(run_key))
         resumed += 1

@@ -24,14 +24,14 @@
 - **持久化**：项目 + 聊天历史 + 赛马结果全部落 PostgreSQL，刷新/重开浏览器都在。
 - **导出 / 分享**：一键导出 `.html` 文件（双击即可打开），或发布生成公开分享链接 `/view/{slug}`。
 - **额度保护**：内置预生成示例兜底（无 API Key 也能演示）、熔断器、预算上限、快照复用（相同调用不重复扣费）、DeepSeek→SiliconFlow 自动 fallback。
-- **稳定性**：SSE 进度流、崩溃后重跑、失败可重试、错误提示。
+- **稳定性**：SSE 进度流、崩溃后从 checkpoint 断点续跑（LangGraph 编排）、失败可重试、错误提示。
 - **质量闸门**：生成后走「结构校验 + 确定性反 AI 味检查（靛蓝主色/紫蓝渐变/emoji 图标/编造指标等，P0 自动回喂重生成）+ 跨模型核验」三重闭环。
 
 ## 技术栈
 
 | 层 | 技术 |
 |---|---|
-| 后端 | FastAPI · SQLAlchemy 2.0 (async) · Alembic · LangGraph · OpenAI 兼容 SDK（DeepSeek 官方 + SiliconFlow） |
+| 后端 | FastAPI · SQLAlchemy 2.0 (async) · Alembic · LangGraph（StateGraph + SQLite checkpoint）· OpenAI 兼容 SDK（DeepSeek 官方 + SiliconFlow） |
 | 前端 | React 18 · TypeScript · Vite · Tailwind CSS · shadcn/ui · React Query · react-router-dom · sonner |
 | 数据库 | PostgreSQL（docker-compose 默认）；本地可切 SQLite |
 | 部署 | Docker Compose（nginx 前端 :80 反代 `/api` → FastAPI，PostgreSQL 持久卷） |
@@ -91,8 +91,8 @@ app/
 │   ├── main.py                 # FastAPI 入口（0.0.0.0、崩溃恢复）
 │   ├── routers/forge.py        # HTTP API（项目 / 运行 / SSE / 赛马 / 发布分享）
 │   ├── services/forge/         # 核心生成链路
-│   │   ├── agent.py            #   意图路由 + 生成 + 落库（LangGraph）
-│   │   ├── forge_react.py      #   ReAct 生成 + 三校核验 + 反 AI 味闸门
+│   │   ├── agent.py            #   异步 run 入口 + 落库（_run_forge）
+│   │   ├── forge_react.py      #   ReAct 三校核验（LangGraph StateGraph + checkpoint）
 │   │   ├── verify.py           #   结构校验 + 跨模型核验 + 反 AI 味检查（slop_checks）
 │   │   ├── codegen.py          #   单文件 HTML 生成（注入视觉规范）
 │   │   ├── design_templates.py #   视觉设计库（铁律 + 布局骨架 + 6 视觉方向 + 图表规范）
