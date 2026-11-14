@@ -122,6 +122,35 @@ export function downloadHtml(html: string, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+/** 复制文本到剪贴板：优先 Clipboard API，失败回退到 execCommand 的临时 textarea 方案。
+ *  返回是否成功，供调用方决定提示语（已复制 / 仅生成）。
+ *  之所以要兜底：Clipboard API 要求安全上下文（HTTPS/localhost），且 publish 的 await 之后
+ *  用户手势可能已过期（Safari 尤其），writeText 会被静默拒绝。execCommand 更宽容。 */
+export async function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* 落入下面的 execCommand 兜底 */
+    }
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 async function call<T>(method: Method, url: string, data?: unknown, timeout = 60_000): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);

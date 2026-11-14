@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, Loader2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,6 +14,8 @@ const EXAMPLES = [
 ];
 const VIEW_OPTIONS = ['', '列表', '表格', '看板', '卡片'];
 const THEME_OPTIONS = ['', '简洁克制', '活泼明快', '商务正式', '极客冷峻'];
+// 澄清阻塞时长：面板出现后 60 秒内未操作，视为「未选择」，按默认理解自动生成。
+const CLARIFY_SECONDS = 60;
 
 // 幂等键：每次点击「生成应用」生成一次，随 URL 带到生成页；刷新/重进时复用，避免重复生成。
 const genKey = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -25,10 +27,13 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [races, setRaces] = useState<Race[]>([]);
 
-  // 生成前理解 + 澄清（方案 A：一次问完、带默认值、可跳过）
+  // 生成前理解 + 澄清（阻塞式：60 秒内未操作，自动按默认理解生成）
   const [specBusy, setSpecBusy] = useState(false);
   const [spec, setSpec] = useState<SpecResult | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // 澄清倒计时（秒）与「是否已因超时自动生成」防重入标记。
+  const [countdown, setCountdown] = useState(CLARIFY_SECONDS);
+  const timedOutRef = useRef(false);
 
   // 可选结构化规格（方案 B：折叠的「更多选项」）
   const [advOpen, setAdvOpen] = useState(false);
@@ -57,6 +62,32 @@ export default function Home() {
   const goGenerate = (text: string) => {
     nav(`/create?prompt=${encodeURIComponent(text)}&race=${race ? '1' : '0'}&key=${genKey()}`);
   };
+
+  const finishClarify = (withAnswers: boolean) => {
+    setSpec(null);
+    goGenerate(buildFinalPrompt(withAnswers));
+  };
+
+  // 澄清面板出现即进入阻塞：重置 60 秒倒计时。
+  useEffect(() => {
+    if (!spec?.needs_clarify) return;
+    setCountdown(CLARIFY_SECONDS);
+    timedOutRef.current = false;
+  }, [spec?.needs_clarify]);
+
+  // 每秒递减；归零视为「用户未选择」，按默认理解自动生成（等价于「跳过」）。
+  useEffect(() => {
+    if (!spec?.needs_clarify || countdown <= 0) return;
+    const id = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(id);
+  }, [spec?.needs_clarify, countdown]);
+
+  useEffect(() => {
+    if (spec?.needs_clarify && countdown === 0 && !timedOutRef.current) {
+      timedOutRef.current = true;
+      finishClarify(false);
+    }
+  }, [spec?.needs_clarify, countdown]);
 
   const create = async () => {
     const text = prompt.trim();
@@ -143,60 +174,78 @@ export default function Home() {
         </div>
 
         {spec?.needs_clarify && (
-          <div className="mt-4 max-w-[720px] rounded-xl border-l-2 border-primary bg-sunk/60 p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="font-display text-base font-bold">我理解你要做的是「{spec.title || '一个应用'}」</h2>
-                <p className="mt-1.5 text-sm text-muted-foreground">生成前确认几个细节——都已按最可能的答案预填，不改也能直接生成。</p>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-[560px] overflow-hidden rounded-2xl border border-border bg-white shadow-xl">
+              {/* 顶部倒计时进度条：剩余时间越少越短 */}
+              <div className="h-1 w-full bg-sunk">
+                <div
+                  className="h-full bg-primary transition-all duration-1000 ease-linear"
+                  style={{ width: `${(countdown / CLARIFY_SECONDS) * 100}%` }}
+                />
               </div>
-              <span className="shrink-0 rounded-full border border-border bg-white px-2.5 py-0.5 text-xs text-muted-foreground">已理解 {Math.round((spec.confidence || 0) * 100)}%</span>
-            </div>
 
-            {(spec.fields.length > 0 || spec.view) && (
-              <div className="mt-4 flex flex-wrap items-center gap-1.5">
-                {spec.fields.map((f) => (
-                  <span key={f.name} className="rounded-md border border-border bg-white px-2 py-0.5 text-xs text-foreground">
-                    {f.name}
-                  </span>
-                ))}
-                {spec.view && <span className="rounded-md bg-sunk px-2 py-0.5 text-xs text-muted-foreground">{spec.view}视图</span>}
-              </div>
-            )}
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {spec.questions.map((q) => (
-                <div key={q.key}>
-                  <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">{q.question}</label>
-                  {q.type === 'select' && q.options.length ? (
-                    <select
-                      value={answers[q.key] ?? q.default}
-                      onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
-                      className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
-                    >
-                      {q.options.map((o) => (
-                        <option key={o} value={o}>
-                          {o}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      value={answers[q.key] ?? q.default}
-                      onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
-                      className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
-                    />
-                  )}
+              <div className="p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="font-display text-lg font-bold">生成前确认一下</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">我理解你要做的是「{spec.title || '一个应用'}」——细节已按最可能的答案预填，直接确认即可。</p>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-border bg-sunk px-2.5 py-0.5 text-xs text-muted-foreground">已理解 {Math.round((spec.confidence || 0) * 100)}%</span>
                 </div>
-              ))}
-            </div>
 
-            <div className="mt-5 flex items-center gap-3">
-              <button onClick={() => goGenerate(buildFinalPrompt(true))} className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90">
-                确认生成
-              </button>
-              <button onClick={() => goGenerate(buildFinalPrompt(false))} className="text-sm text-muted-foreground hover:text-primary">
-                跳过，直接用默认值生成
-              </button>
+                {(spec.fields.length > 0 || spec.view) && (
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    {spec.fields.map((f) => (
+                      <span key={f.name} className="rounded-md border border-border bg-sunk px-2 py-0.5 text-xs text-foreground">
+                        {f.name}
+                      </span>
+                    ))}
+                    {spec.view && <span className="rounded-md bg-sunk px-2 py-0.5 text-xs text-muted-foreground">{spec.view}视图</span>}
+                  </div>
+                )}
+
+                <div className="mt-4 grid gap-3">
+                  {spec.questions.map((q) => (
+                    <div key={q.key}>
+                      <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">{q.question}</label>
+                      {q.type === 'select' && q.options.length ? (
+                        <select
+                          value={answers[q.key] ?? q.default}
+                          onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
+                          className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
+                        >
+                          {q.options.map((o) => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          value={answers[q.key] ?? q.default}
+                          onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
+                          className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-6 flex items-center justify-between gap-3">
+                  <span className="flex items-baseline gap-1 text-sm text-muted-foreground">
+                    <span className="font-mono-ui text-base font-semibold tabular-nums text-foreground">{countdown}</span>
+                    秒后自动生成
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => finishClarify(false)} className="text-sm text-muted-foreground hover:text-primary">
+                      跳过
+                    </button>
+                    <button onClick={() => finishClarify(true)} className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90">
+                      确认生成
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}

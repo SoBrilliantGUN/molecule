@@ -49,7 +49,7 @@ PLAN_CHECKS_SYSTEM = (
 # 存储安全是硬约束：生成的单文件应用会以 iframe（sandbox）或导出后 file:// 方式打开，
 # localStorage 在这些环境可能被禁用。核验清单无论如何生成，都必须包含这一项，防止
 # 生成物因「localStorage 不可用」而卡在加载态 / 阻断录入。
-_STORAGE_SAFETY = "数据用 localStorage 持久化，且读写有 try/catch 兜底、存储不可用时应用仍能完整使用（不卡加载、不阻断录入）"
+_STORAGE_SAFETY = "数据用 localStorage 持久化**完整工作状态**（所有记录/当前游戏局面，而非只存一个统计值如最高分），且读写有 try/catch 兜底、存储不可用时应用仍能完整使用（不卡加载、不阻断录入）"
 
 
 class ForgeState(TypedDict, total=False):

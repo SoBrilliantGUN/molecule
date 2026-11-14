@@ -4,7 +4,7 @@ import { ChevronLeft, Download, Loader2, Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import AppRuntime from '@/components/AppRuntime';
 import ChatPanel from '@/components/ChatPanel';
-import { downloadHtml, forge, type Project } from '@/lib/forge';
+import { copyText, downloadHtml, forge, type Project } from '@/lib/forge';
 
 /** 生成中的进度视图：流式展示后端 push 的阶段/核验事件，避免用户以为卡住。 */
 function GeneratingProgress({ events }: { events: string[] }) {
@@ -87,12 +87,11 @@ export default function ProjectPage() {
       const p = await forge.publish(projectId);
       if (!p.slug) throw new Error('发布失败，缺少链接标识');
       const url = `${window.location.origin}/view/${p.slug}`;
-      try {
-        await navigator.clipboard.writeText(url);
-        toast.success('分享链接已复制', { description: url });
-      } catch {
-        toast.success('分享链接已生成', { description: url });
-      }
+      const copied = await copyText(url);
+      toast.success(copied ? '分享链接已复制' : '分享链接已生成', {
+        description: url,
+        action: { label: '打开', onClick: () => window.open(url, '_blank') },
+      });
     } catch (e) {
       toast.error('分享失败', { description: (e as Error).message });
     }

@@ -6,7 +6,8 @@
   ③ 调用方按结果重算分，低于阈值则针对缺失项定向重生成。
 
 ``side_effect_checks`` 只查骨架（doctype/html/head/title/body 闭合、外链 JS/CSS），
-「是否有 script/style/localStorage、交互是否真实」这类语义项交给 ② 按核验项判断——
+外加一个确定性的 localStorage 持久化检查（有脚本却无 localStorage 即判违规）。
+「交互是否真实、存储的 try/catch 语义是否正确」这类语义项仍交给 ② 按核验项判断——
 避免把每个阶段都误判为「骨架缺失」。
 """
 
@@ -44,6 +45,11 @@ def side_effect_checks(html: str) -> list[str]:
         violations.append("存在未闭合的 <script>")
     if "<style" in low and "</style>" not in low:
         violations.append("存在未闭合的 <style>")
+    # localStorage 持久化是核心验收项（「能存数据」）。这是确定性字符串检查，零额度、可靠，
+    # 不依赖跨模型核验（后者对长 HTML 可能漏判「缺少 localStorage」）。有脚本却完全没有
+    # localStorage，说明生成物没有持久化能力，直接回喂重生成。
+    if "<script" in low and "localstorage" not in low:
+        violations.append("缺少 localStorage 持久化（有脚本但未做数据持久化）")
     # 外链检测：`(?:https?:)?//` 同时覆盖 `https://` 与协议相对 `//`；`\.js\b` 用词边界，
     # 让带查询串的 `x.js?v=2` 也能命中（原来要求 `.js` 结尾，`?v=2` 会漏）。
     for pat, label in (
