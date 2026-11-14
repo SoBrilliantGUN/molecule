@@ -80,9 +80,9 @@ export interface RunStart {
   run_key: string;
   project_id: number | null;
 }
-// SSE stage/dag/verify events pushed by /runs/{key}/events
+// SSE stage/verify/error/done events pushed by /runs/{key}/events
 export interface ForgeEvent {
-  type: string; // stage | dag | verify | done | error
+  type: string; // stage | verify | error | done
   data: {
     index?: number;
     total?: number;
@@ -182,7 +182,7 @@ export const forge = {
     call<RunStart>('POST', '/runs', body, 30_000),
   streamRun: (runKey: string, onEvent: (e: ForgeEvent) => void, onDone: (data: ForgeEvent['data']) => void) => {
     const es = new EventSource(`/api/v1/forge/runs/${runKey}/events`);
-    const types = ['stage', 'dag', 'verify', 'error'] as const;
+    const types = ['stage', 'verify', 'error'] as const;
     types.forEach((t) => {
       es.addEventListener(t, (ev: MessageEvent) => {
         try {

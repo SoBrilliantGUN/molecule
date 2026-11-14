@@ -132,3 +132,27 @@ def test_graph_resumes_from_checkpoint(tmp_path, monkeypatch):
     assert calls["plan"] == 1
     assert calls["generate"] == 2
     assert calls["verify"] == 1
+
+
+def test_graph_concurrent_runs_share_checkpointer(tmp_path, monkeypatch):
+    """同一 checkpointer 上并发跑两个 thread_id（赛马 2 路并行的形态），两者都完成且互不串状态。"""
+    calls = {"normalize": 0, "plan": 0, "generate": 0, "verify": 0}
+    _patch(monkeypatch, calls)
+
+    async def run():
+        db = tmp_path / "cp.sqlite"
+        async with AsyncSqliteSaver.from_conn_string(str(db)) as cp:
+            graph = forge_react._build_graph().compile(checkpointer=cp)
+
+            async def one(tid):
+                ctx = RunContext(run_key=tid)
+                return await graph.ainvoke(_initial(f"需求 {tid}"), _config(tid, ctx))
+
+            return await asyncio.gather(one("run-a"), one("run-b"))
+
+    r1, r2 = asyncio.run(run())
+    assert r1["title"] == "待办"
+    assert r2["title"] == "待办"
+    assert r1["html"] == VALID_HTML and r2["html"] == VALID_HTML
+    # 两条线程各自跑完 normalize/plan/generate/verify 各一次，互不串 state
+    assert calls == {"normalize": 2, "plan": 2, "generate": 2, "verify": 2}

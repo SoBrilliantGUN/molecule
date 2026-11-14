@@ -68,7 +68,12 @@ async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: s
         row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
         if row:
             await repo.update(AgentRuns, row[0]["id"], status="done")
-        await emit("done", {"project_id": project["id"], "name": project["name"]})
+        await emit("done", {
+            "project_id": project["id"],
+            "name": project["name"],
+            "verify_failed": bool(out.get("verify_failed")),
+            "verify_score": float((out.get("verify") or {}).get("score", 0.0)),
+        })
         return {"project_id": project["id"], "status": "done"}
     except Exception as exc:  # noqa: BLE001 - surface error to the SSE stream
         logger.error("forge run %s failed: %s", run_key, exc, exc_info=True)
@@ -101,7 +106,17 @@ async def _persist_project(ctx: RunContext, out: dict, prompt: str, project_id: 
         project = await ops.update_project_html(project_id, html, title)
     else:
         project = await ops.create_project(title, html, description=prompt[:200])
-    await repo.add(ChatMessages, project_id=project["id"], role="user", content=prompt)
-    meta = {"usage": ctx.budget.snapshot(), "verify": out.get("verify", {})}
-    await repo.add(ChatMessages, project_id=project["id"], role="assistant", content=f"已生成「{project['name']}」。", meta_json=dumps(meta))
+    # 幂等：崩溃续跑会再次进入此处，若项目已存在同 prompt 的用户消息（上次已落过）则跳过，
+    # 避免续跑产生重复的 user/assistant 聊天记录。
+    dup = await repo.find(
+        ChatMessages,
+        ChatMessages.project_id == project["id"],
+        ChatMessages.role == "user",
+        ChatMessages.content == prompt,
+        limit=1,
+    )
+    if not dup:
+        await repo.add(ChatMessages, project_id=project["id"], role="user", content=prompt)
+        meta = {"usage": ctx.budget.snapshot(), "verify": out.get("verify", {}), "verify_failed": bool(out.get("verify_failed"))}
+        await repo.add(ChatMessages, project_id=project["id"], role="assistant", content=f"已生成「{project['name']}」。", meta_json=dumps(meta))
     return project

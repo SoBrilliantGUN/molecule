@@ -72,9 +72,9 @@ async def remove(model: Type, *where: Any) -> int:
 async def append_events_json(run_key: str, payload_json: str) -> None:
     """Atomically append a JSON array to AgentRuns.events_json via a single UPDATE.
 
-    Uses PostgreSQL jsonb concatenation so concurrent emitters (parallel DAG nodes)
+    Uses PostgreSQL jsonb concatenation so concurrent emitters (e.g. race lanes)
     can't lose events to a read-modify-write race. ``payload_json`` must be a JSON
-    array, e.g. ``[{"type": "dag", "data": {...}}]``.
+    array, e.g. ``[{"type": "verify", "data": {...}}]``.
     """
     async with session() as s:
         await s.execute(

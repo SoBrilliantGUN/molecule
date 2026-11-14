@@ -259,6 +259,11 @@ async def _get_graph():
         return _graph
 
 
+async def _noop_emit(_event_type: str, _data: dict) -> None:
+    """默认无事件消费者时的空实现（async，避免 `await` 到同步 lambda 报错）。"""
+    return None
+
+
 async def generate_verified(
     ctx: RunContext,
     requirement: str,
@@ -273,7 +278,7 @@ async def generate_verified(
     ``thread_id = ctx.run_key``：进程崩溃后同 run_key 重新调用，从最近 checkpoint 续跑，
     跳过已完成节点。返回 ``{"html", "title", "verify", "slop"}``。
     """
-    emit = emit or (lambda _e, _d: None)
+    emit = emit or _noop_emit
     graph = await _get_graph()
     config = {"configurable": {"thread_id": ctx.run_key, "ctx": ctx, "emit": emit}}
 
@@ -297,9 +302,11 @@ async def generate_verified(
     existing = await _checkpointer.aget_tuple(config)
     result = await graph.ainvoke(None if existing else initial, config)
     v = result.get("verify") or {"score": 0.0, "checked": {}, "missing": []}
+    verify_failed = (not v.get("degraded")) and v.get("score", 0.0) < VERIFY_PASS_SCORE
     return {
         "html": result.get("html", ""),
         "title": result.get("title", ""),
         "verify": v,
         "slop": result.get("slop_warnings", []),
+        "verify_failed": verify_failed,
     }

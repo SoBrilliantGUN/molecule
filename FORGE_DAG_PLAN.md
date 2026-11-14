@@ -49,11 +49,15 @@ ReAct 生成，不再需要路由。新建 / 迭代的差异只剩「有无现�
 
 ## 五、断点续跑的真实形态
 
-DAG 的「阶段级 checkpoint + 续跑」随 DAG 一起退役。现在的恢复语义是：
+DAG 的「阶段级 checkpoint + 续跑」随 DAG 一起退役，但「断点续跑」能力没有丢——它以 LangGraph
+StateGraph 的 SQLite checkpoint 形态保留下来（`forge_react.py` 把 ReAct 循环编译成图，每个节点边界
+= 一个 checkpoint 点）：
 
 - 后端崩溃后，`run_manager.resume_interrupted_runs()` 把卡在 `running` 的 run 重新拉起；
-- ReAct 单次生成没有中间 checkpoint，所以「恢复」= 从落库的 `user_input` 重新跑一遍；
-- 赛马（`race-*`）任务不参与单应用续跑，直接标记结束。
+- 单应用 run：`resume_forge` 用同 `run_key`（= `thread_id`）重新 `ainvoke`，从最近 checkpoint 续跑、
+  跳过已完成节点；单次 `codegen.generate`（最贵的一步）中断仍会重跑该步（节点级恢复）；
+- 赛马（`race-*`）：`resume_race` 重拉 `_race_worker`，每路（`thread_id = race-{id}:{model}`）从各自
+  checkpoint 恢复，已完成路立即返回、未完成路从断点续跑。
 
 ## 六、相关文档
 
