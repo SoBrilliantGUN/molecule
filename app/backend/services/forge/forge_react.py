@@ -33,12 +33,18 @@ PLAN_CHECKS_SYSTEM = (
 )
 
 
+# 存储安全是硬约束：生成的单文件应用会以 iframe（sandbox）或导出后 file:// 方式打开，
+# localStorage 在这些环境可能被禁用。核验清单无论如何生成，都必须包含这一项，防止
+# 生成物因「localStorage 不可用」而卡在加载态 / 阻断录入。
+_STORAGE_SAFETY = "数据用 localStorage 持久化，且读写有 try/catch 兜底、存储不可用时应用仍能完整使用（不卡加载、不阻断录入）"
+
+
 async def plan_checks(ctx: RunContext, requirement: str) -> list[str]:
     """One light call → verify checklist for the requirement. Failure → sensible defaults."""
     defaults = [
         "是完整可运行的 HTML 页面（含 <!doctype> / <html> / <head> / <body>）",
         "内联所有 CSS 与 JS，不引用外部 JS/CSS（字体除外）",
-        "数据用 localStorage 持久化（刷新后数据仍在）",
+        _STORAGE_SAFETY,
         "有真实交互：能新增/编辑/删除/勾选一项内容",
         "视觉贴合主题、非 AI 模板观感",
     ]
@@ -57,10 +63,16 @@ async def plan_checks(ctx: RunContext, requirement: str) -> list[str]:
 
         data = extract_json(result.content)
         checks = [str(c) for c in (data.get("checks") or []) if str(c).strip()]
-        return checks[:8] if checks else defaults
+        if not checks:
+            checks = list(defaults)
     except Exception as exc:  # noqa: BLE001 - checks planning must never block generation
         logger.warning("plan_checks 失败（%s），用默认核验项", exc)
-        return defaults
+        checks = list(defaults)
+
+    # 无论核验清单怎么生成，都确保「存储安全」这一项在列（防止生成物因存储不可用而卡死）。
+    if not any("localStorage" in c or "存储" in c for c in checks):
+        checks.append(_STORAGE_SAFETY)
+    return checks[:8]
 
 
 async def generate_verified(
