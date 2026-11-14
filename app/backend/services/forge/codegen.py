@@ -11,6 +11,7 @@ import os
 import re
 
 from services.forge import gateway
+from services.forge.design_templates import style_block
 from services.forge.gateway import RunContext
 from services.forge.util import DomainError
 
@@ -26,23 +27,8 @@ LLM_GENERATE_MAX_TOKENS = int(os.environ.get("LLM_GENERATE_MAX_TOKENS", "32000")
 
 logger = logging.getLogger(__name__)
 
-# 生成应用的「反模板化」设计指导。要点：避免 AI 默认观感，让设计贴合应用主题，
-# 用一个克制的视觉焦点表达性格，其余保持秩序与可读性。
-DESIGN_GUIDE = """【视觉设计铁律 —— 生成的界面必须看起来是「为这个应用专门设计的」，而不是 AI 模板】
-
-- 确定一个具体主题与受众，配色/字体/布局都从它长出来。一个「健身打卡」应用和一个「客户对账」应用的观感应当截然不同。
-- 避免这些 AI 生成页的常见雷区：
-  · 米白/奶油底（近 #F4F1EA）+ 高对比衬线标题 + 陶土色点缀（近 #D97757）；
-  · 近黑底（#0B0B0B/#111）+ 单一荧光绿或朱红点缀；
-  · SaaS 卡片套件：内容切成一堆一模一样圆角卡片、处处同一圆角、统一软灰阴影、渐变当装饰；
-  · 每个标题上都压一行全大写 eyebrow 小标签；用「A · B · C」中点串词；「词 — 片段」的 em dash 标签；链接/按钮后跟「→」。
-- 字体是性格的载体：别用默认字体栈。选 1–2 个有辨识度的字体（可用系统里有的优质字体或 Google Fonts），并定清晰的字号层级与字重。
-- 视觉结构即信息：分隔线、编号、标签只在你真的需要表达顺序/分组时才用，别为了装饰。
-- 把「大胆」花在一处：让一个元素成为记忆点（一个有态度的标题、一个数据焦点、一次克制的动效），其余保持安静克制。砍掉一切不服务主题的装饰。
-- 质量底线不声张：响应式到移动端、可见的键盘焦点、尊重 prefers-reduced-motion、对比度 ≥ 4.5:1。
-- 文案从使用者视角写、说人话：CTA 说清楚会发生什么（「保存更改」而非「提交」），空状态是行动邀请，错误说明发生了什么及如何修。
-- 配色用 4–6 个有名字的 hex 值，避免五彩渐变；用 hairline 分隔线或留白分层，而非堆叠圆角卡片。
-"""
+# 视觉设计指导已抽到 design_templates.py：style_block(requirement) 返回「通用铁律 +
+# 按主题/风格挑出的候选方向」，由 build_messages 拼进生成 prompt。
 
 
 def _strip_fence(html: str) -> str:
@@ -100,7 +86,7 @@ def _validate_html(html: str) -> None:
 
 def build_messages(requirement: str, current_html: str | None = None) -> list[dict]:
     """Prompt for a self-contained single-file app. `current_html` enables iterative edit."""
-    system = (
+    hard = (
         "你是一位资深前端设计师兼工程师。根据用户的一句话需求，直接产出一个**完整、自包含的单文件 HTML 应用**。\n"
         "硬性要求：\n"
         "- 内联所有 CSS 与 JS，不引用任何外部 JS/CSS 依赖（字体除外，可引用 Google Fonts）；\n"
@@ -108,8 +94,17 @@ def build_messages(requirement: str, current_html: str | None = None) -> list[di
         "- 有真实交互：能新增/编辑/删除/勾选等，不是静态展示页；\n"
         "- 只输出 HTML 文档本身，不要 markdown 围栏，不要任何解释性文字；\n"
         "- 保持精简：聚焦需求里的核心功能，不要堆无关功能、不要写成多文件工程，整体控制在一个单文件的合理长度内。\n\n"
-        + DESIGN_GUIDE
     )
+    if current_html:
+        # 迭代修改：守住已有设计，只做需求要求的改动，别借机换一套视觉方向。
+        style = (
+            "这是对现有应用的迭代修改：保持它已有的视觉风格、配色、字体与布局，只做需求要求的改动，"
+            "不要推倒重来、不要引入新的设计方向。\n"
+        )
+    else:
+        # 全新生成：注入通用铁律 + 按主题/风格挑出的候选方向。
+        style = style_block(requirement)
+    system = hard + style
     user = (
         (f"现有应用 HTML（在此基础上修改）：\n{current_html}\n\n" if current_html else "")
         + f"需求：{requirement}"

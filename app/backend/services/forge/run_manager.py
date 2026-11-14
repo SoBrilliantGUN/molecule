@@ -142,8 +142,9 @@ async def resume_interrupted_runs() -> int:
     """Requeue runs left in ``running`` after a crash (process restart).
 
     Called once at app startup: any row still marked ``running`` was interrupted mid-run,
-    so we re-register its task via agent.resume_forge, which continues from checkpoint_json
-    if a long-run plan is present, or re-runs fresh otherwise. Returns the resumed count.
+    so we re-register its task via agent.resume_forge. The ReAct path generates in a single
+    attempt (no mid-run checkpoint), so resume re-runs fresh from the stored user_input.
+    Returns the resumed count.
     """
     from services.forge import agent
 

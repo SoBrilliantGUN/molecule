@@ -202,17 +202,144 @@ _RECRUITMENT = """<!doctype html>
 </body>
 </html>"""
 
+_KANBAN = """<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>项目看板</title>
+<style>
+  :root { --bg:#f4f5f7; --ink:#14161a; --muted:#6b7280; --line:#e3e6ea; --accent:#2563eb; --col:#ffffff; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--ink); font-family:'Inter','PingFang SC',system-ui,sans-serif; padding:28px; line-height:1.5; }
+  .wrap { max-width:980px; margin:0 auto; }
+  header { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:20px; }
+  h1 { font-size:26px; font-weight:800; letter-spacing:-.01em; }
+  .sub { color:var(--muted); font-size:13px; margin-top:4px; }
+  form { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:22px; }
+  input, select, button { padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:var(--col); }
+  input[type=text] { flex:1; min-width:180px; }
+  button { background:var(--accent); color:#fff; border:none; cursor:pointer; font-weight:600; }
+  .board { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  @media (max-width:720px){ .board { grid-template-columns:1fr; } }
+  .col { background:#eceef1; border-radius:12px; padding:12px; min-height:200px; }
+  .col h2 { font-size:13px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; padding:4px 6px 10px; }
+  .col .count { float:right; font-weight:600; color:var(--ink); }
+  .cards { display:flex; flex-direction:column; gap:8px; min-height:60px; }
+  .card { background:var(--col); border:1px solid var(--line); border-radius:9px; padding:11px 12px; cursor:grab; }
+  .card.dragging { opacity:.4; }
+  .card .t { font-weight:600; font-size:14px; }
+  .card .meta { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12px; color:var(--muted); }
+  .pri { font-size:11px; padding:1px 7px; border-radius:10px; font-weight:600; }
+  .pri.high { background:#fdecea; color:#b23b2e; }
+  .pri.mid { background:#fdf3e0; color:#a8741b; }
+  .pri.low { background:#eef1f4; color:#5b6470; }
+  .deadline { font-variant-numeric:tabular-nums; }
+  .overdue { color:#b23b2e; font-weight:600; }
+  .del { margin-left:auto; background:none; border:none; color:#b0b6bf; cursor:pointer; font-size:15px; }
+  .del:hover { color:#b23b2e; }
+  .empty { padding:16px 6px; text-align:center; color:#a9b0ba; font-size:12px; border:1px dashed var(--line); border-radius:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>项目看板</h1>
+      <p class="sub">拖拽卡片调整状态或排序，数据保存在本地</p>
+    </div>
+  </header>
+  <form id="f">
+    <input id="title" placeholder="任务名称" required>
+    <select id="pri"><option value="high">高优先级</option><option value="mid" selected>中优先级</option><option value="low">低优先级</option></select>
+    <input id="due" type="date">
+    <button>添加任务</button>
+  </form>
+  <div class="board" id="board"></div>
+</div>
+<script>
+  const K='kanban_board';
+  const COLS=['todo','doing','done'];
+  const COLS_NAME={todo:'待办',doing:'进行中',done:'已完成'};
+  const PRI={high:['高','high'],mid:['中','mid'],low:['低','low']};
+  const load=()=>JSON.parse(localStorage.getItem(K)||'{"todo":[],"doing":[],"done":[]}');
+  const save=(d)=>localStorage.setItem(K,JSON.stringify(d));
+  const esc=(s)=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const today=()=>new Date().toISOString().slice(0,10);
+  function card(c,ci,col){
+    const [pl,pk]=PRI[c.pri]||PRI.mid;
+    const overdue=c.due&&c.due<today()?' overdue':'';
+    return `<div class="card" draggable="true" data-col="${col}" data-i="${ci}">
+      <div class="t">${esc(c.title)}</div>
+      <div class="meta"><span class="pri ${pk}">${pl}</span>${c.due?`<span class="deadline${overdue}">${esc(c.due)}</span>`:''}<button class="del" data-col="${col}" data-i="${ci}">×</button></div>
+    </div>`;
+  }
+  function render(){
+    const d=load();
+    const board=document.getElementById('board');
+    board.innerHTML=COLS.map(col=>{
+      const items=d[col]||[];
+      const body=items.length?items.map((c,i)=>card(c,i,col)).join(''):'<div class="empty">拖拽任务到这里</div>';
+      return `<div class="col" data-col="${col}"><h2>${COLS_NAME[col]}<span class="count">${items.length}</span></h2><div class="cards">${body}</div></div>`;
+    }).join('');
+    bindDrag();
+  }
+  function bindDrag(){
+    let drag=null;
+    document.querySelectorAll('.card').forEach(el=>{
+      el.addEventListener('dragstart',e=>{drag=el;el.classList.add('dragging');e.dataTransfer.effectAllowed='move';});
+      el.addEventListener('dragend',()=>{el.classList.remove('dragging');drag=null;});
+    });
+    document.querySelectorAll('.cards').forEach(zone=>{
+      zone.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='move';});
+      zone.addEventListener('drop',e=>{
+        e.preventDefault();
+        if(!drag)return;
+        const d=load();
+        const from=drag.dataset.col, fi=+drag.dataset.i, to=zone.closest('.col').dataset.col;
+        const [moved]=d[from].splice(fi,1);
+        if(!moved)return;
+        const after=zone.querySelector('.card:not(.dragging)');
+        let ti=(d[to]||[]).length;
+        if(after&&after.dataset.col===to)ti=+after.dataset.i;
+        (d[to]=d[to]||[]).splice(ti,0,moved);
+        save(d);render();
+      });
+    });
+  }
+  document.getElementById('f').addEventListener('submit',e=>{
+    e.preventDefault();
+    const d=load();
+    d.todo.push({title:document.getElementById('title').value,pri:document.getElementById('pri').value,due:document.getElementById('due').value||''});
+    save(d);e.target.reset();render();
+  });
+  document.getElementById('board').addEventListener('click',e=>{
+    if(e.target.classList.contains('del')){
+      const d=load();const col=e.target.dataset.col, i=+e.target.dataset.i;
+      d[col].splice(i,1);save(d);render();
+    }
+  });
+  render();
+</script>
+</body>
+</html>"""
+
 EXAMPLES = [
     {"name": "读书笔记", "prompt": "做一个读书笔记管理，记录书名、作者、阅读状态和评分", "html": _READING_NOTES},
     {"name": "健身打卡", "prompt": "做一个健身打卡应用，记录日期、动作、组数、重量", "html": _FITNESS_LOG},
     {"name": "招聘跟进", "prompt": "做一个招聘跟进表，包含候选人、岗位、面试阶段", "html": _RECRUITMENT},
+    {"name": "项目看板", "prompt": "做一个带优先级、截止日、拖拽排序的项目看板", "html": _KANBAN, "keys": ["待办看板", "看板"]},
 ]
 
 
 def match_mock(prompt: str) -> dict | None:
-    """命中预生成示例则返回 {name, html}，否则 None。按示例名在提示词中出现做宽松匹配。"""
+    """命中预生成示例则返回 {name, html}，否则 None。
+
+    按示例名或其别名（keys）在提示词中出现做宽松匹配；「项目看板 / 待办看板 / 看板」都能
+    命中看板示例，覆盖避坑指南首推的演示选题，无 API Key 也能走通闭环。
+    """
     p = prompt or ""
     for ex in EXAMPLES:
-        if ex["name"] in p:
+        if ex["name"] in p or any(k in p for k in ex.get("keys", [])):
             return {"name": ex["name"], "html": ex["html"]}
     return None

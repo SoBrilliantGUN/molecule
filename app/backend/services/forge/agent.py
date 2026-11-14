@@ -20,7 +20,7 @@ from models.chat_messages import ChatMessages
 from services.forge import codegen, gateway, ops, repo, seed
 from services.forge.budget import Budget, BudgetExceeded
 from services.forge.gateway import GatewayError, RunContext
-from services.forge.util import DomainError, dumps, extract_json, loads
+from services.forge.util import DomainError, dumps
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ async def create_from_prompt(prompt: str, model: str | None = None) -> dict:
     compat path (POST /projects); the streaming path goes through start_forge."""
     ctx = RunContext(run_key=uuid.uuid4().hex[:16], budget=Budget())
     mock = seed.match_mock(prompt)
-    out = {"html": mock["html"], "title": mock["name"], "verify": {}} if mock else await _run_classified(ctx, _noop_emit, _noop_checkpoint, prompt, None, model)
+    out = {"html": mock["html"], "title": mock["name"], "verify": {}} if mock else await _run_classified(ctx, _noop_emit, prompt, None, model)
     project = await _persist_project(ctx, out, prompt, None)
     return project
 
@@ -136,37 +136,31 @@ async def _noop_emit(_type: str, _data: dict) -> None:
     return None
 
 
-async def _noop_checkpoint(_state: dict | None = None) -> None:
-    return None
-
-
 async def start_forge(run_key: str, prompt: str, project_id: int | None, model: str | None) -> dict:
-    """Background entry for a fresh run: emits stage/dag/verify/done events bound to run_key.
+    """Background entry for a fresh run: emits stage/verify/done events bound to run_key.
 
     Called by the router in an asyncio task; events flow to run_manager.emit so SSE
     subscribers see progress live. Returns the final {project_id, status} on success.
     """
-    return await _run_forge(run_key, prompt, project_id, model, resume_state=None)
+    return await _run_forge(run_key, prompt, project_id, model)
 
 
 async def resume_forge(run_key: str) -> dict:
-    """Resume an interrupted run (status="running" after a crash) from its checkpoint.
+    """Re-run an interrupted run (status="running" after a crash).
 
-    Reads the saved checkpoint_json; if it holds a long-run stage plan, resumes from the
-    last completed node. Otherwise re-runs fresh (short tasks / crash before first node).
+    The ReAct path generates in a single attempt (no mid-run checkpoint), so resume is
+    simply a fresh run from the stored user_input. Retired DAG stage checkpoints are gone.
     """
     rows = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
     row = rows[0] if rows else None
     if not row:
         return {"run_key": run_key, "status": "error", "error": "run not found"}
     project_id = row.get("project_id")
-    resume_state = loads(row.get("checkpoint_json"), None) or {}
-    # Prefer the full requirement stored in the checkpoint (user_input is truncated to 2000).
-    prompt = resume_state.get("requirement") or row.get("user_input") or ""
-    return await _run_forge(run_key, prompt, project_id, None, resume_state)
+    prompt = row.get("user_input") or ""
+    return await _run_forge(run_key, prompt, project_id, None)
 
 
-async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: str | None, resume_state: dict | None) -> dict:
+async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: str | None) -> dict:
     """Shared background run core (fresh or resume): emits events bound to run_key.
 
     Called by the router in an asyncio task; events flow to run_manager.emit so SSE
@@ -175,33 +169,20 @@ async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: s
     from services.forge import run_manager
     from services.forge.gateway import RunContext
     from services.forge.budget import Budget
-    from services.forge.forge_dag import run_stages_resume
 
     ctx = RunContext(run_key=run_key, project_id=project_id, budget=Budget())
 
     async def emit(event_type: str, data: dict) -> None:
         await run_manager.emit(run_key, event_type, data)
 
-    async def checkpoint(state: dict) -> None:
-        try:
-            row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
-            if row:
-                await repo.update(AgentRuns, row[0]["id"], status="running", checkpoint_json=dumps(state))
-        except Exception as exc:  # noqa: BLE001 - checkpoint must not break the run
-            logger.warning("checkpoint failed for %s: %s", run_key, exc)
-
     try:
-        if resume_state and resume_state.get("stages"):
-            await emit("stage", {"index": 0, "total": 0, "text": "检测到未完成的长任务，从断点续跑…"})
-            out = await run_stages_resume(ctx, emit, checkpoint, prompt, resume_state)
+        mock = seed.match_mock(prompt)
+        if mock:
+            await emit("stage", {"index": 0, "total": 0, "text": f"命中预生成示例「{mock['name']}」，直接返回（无需调用模型）"})
+            out = {"html": mock["html"], "title": mock["name"], "verify": {}}
         else:
-            mock = seed.match_mock(prompt)
-            if mock:
-                await emit("stage", {"index": 0, "total": 0, "text": f"命中预生成示例「{mock['name']}」，直接返回（无需调用模型）"})
-                out = {"html": mock["html"], "title": mock["name"], "verify": {}}
-            else:
-                await emit("stage", {"index": 0, "total": 0, "text": "接收需求，开始生成…"})
-                out = await _run_classified(ctx, emit, checkpoint, prompt, project_id, model)
+            await emit("stage", {"index": 0, "total": 0, "text": "接收需求，开始生成…"})
+            out = await _run_classified(ctx, emit, prompt, project_id, model)
         project = await _persist_project(ctx, out, prompt, project_id)
         row = await repo.find(AgentRuns, AgentRuns.run_key == run_key, limit=1)
         if row:
@@ -217,7 +198,7 @@ async def _run_forge(run_key: str, prompt: str, project_id: int | None, model: s
         return {"project_id": project_id, "status": "error", "error": str(exc)}
 
 
-async def _run_classified(ctx, emit, checkpoint, prompt: str, project_id: int | None, model: str | None) -> dict:
+async def _run_classified(ctx, emit, prompt: str, project_id: int | None, model: str | None) -> dict:
     """单次完整生成 + 三校核验（ReAct）。DAG 分阶段拼接片段已退役。
 
     之前按复杂度把新建/大改路由到 DAG，但 DAG 逐阶段拼接片段会产出「空 HTML / 半成品 /

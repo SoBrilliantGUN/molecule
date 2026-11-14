@@ -89,8 +89,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="FastAPI Modular Template",
-    description="A best-practice FastAPI template with modular architecture",
+    title="Molecules Forge API",
+    description="一句话 → 单文件 HTML 应用的生成服务（Atoms 复刻面试 Demo）",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -196,7 +196,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 @app.get("/")
 def root():
-    return {"message": "FastAPI Modular Template is running"}
+    return {"message": "Molecules Forge API is running"}
 
 
 @app.get("/health")

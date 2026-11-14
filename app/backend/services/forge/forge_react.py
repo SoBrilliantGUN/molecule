@@ -6,7 +6,7 @@ When the model decides the task is "done", we never trust it blindly:
   ③ program computes the score; below VERIFY_PASS_SCORE → regenerate targeted at missing
      items (≤ REACT_MAX_RETRY attempts); if still short, returns with a visible warning.
 
-Like forge_dag, all LLM calls go through gateway.chat (budget / breaker / accounting).
+All LLM calls go through gateway.chat (budget / breaker / accounting).
 """
 
 from __future__ import annotations
@@ -16,16 +16,14 @@ import os
 
 from services.forge import gateway
 from services.forge.codegen import generate, normalize_requirement
-from services.forge.forge_dag import side_effect_checks, verify_html
 from services.forge.gateway import RunContext
 from services.forge.util import DomainError
+from services.forge.verify import side_effect_checks, slop_checks, slop_p0_messages, verify_html
 
 logger = logging.getLogger(__name__)
 
 VERIFY_PASS_SCORE = float(os.environ.get("VERIFY_PASS_SCORE", "0.7"))
 REACT_MAX_RETRY = int(os.environ.get("REACT_MAX_RETRY", "2"))
-# 核验模型必须可用：Qwen3-Coder-480B 在硅基流动 403 禁用，故默认 GLM-5.3（跨家核验）。
-VERIFY_MODEL = os.environ.get("LLM_VERIFY_MODEL", "zai-org/GLM-5.3")
 
 # short task: generate a compact verify checklist from the requirement in one tiny call
 PLAN_CHECKS_SYSTEM = (
@@ -90,6 +88,7 @@ async def generate_verified(
     title = ""
     attempts = 0
     missing: list[str] = []
+    slop_warnings: list[dict] = []
     while attempts <= REACT_MAX_RETRY:
         focus = f"\n特别补齐此前未通过的核验项：{'；'.join(missing[:4])}" if missing else ""
         await emit("verify", {"text": f"第 {attempts + 1} 轮：正在生成完整应用（模型思考中，约需 1–2 分钟）…" + (f"（补齐：{'、'.join(missing[:3])}）" if missing else ""), "score": 0.0, "passed": False, "attempt": attempts + 1})
@@ -102,6 +101,16 @@ async def generate_verified(
         if violations:
             missing = violations
             await emit("verify", {"text": f"结构性校验未过：{'；'.join(violations[:4])}", "score": 0.0, "passed": False})
+            attempts += 1
+            continue
+
+        # ①b 反 AI 味检查（确定性、零额度）：P0 必须改 → 回喂重生成；P1 记入警告
+        slop = slop_checks(html)
+        slop_warnings = [f for f in slop if f["severity"] != "P0"]
+        p0 = slop_p0_messages(slop)
+        if p0:
+            missing = p0
+            await emit("verify", {"text": f"反 AI 味检查未过：{'；'.join(p0[:3])}", "score": 0.0, "passed": False})
             attempts += 1
             continue
 
@@ -119,10 +128,10 @@ async def generate_verified(
             },
         )
         if passed:
-            return {"html": html, "title": title, "verify": v}
+            return {"html": html, "title": title, "verify": v, "slop": slop_warnings}
         missing = v["missing"]
         attempts += 1
 
     # Reached retry budget and still short → return with an honest warning.
     await emit("verify", {"text": f"重试 {REACT_MAX_RETRY} 次后核验分仍低于 {VERIFY_PASS_SCORE}，返回当前结果并注明未通过", "score": v.get("score", 0.0), "passed": False, "missing": missing})
-    return {"html": html, "title": title, "verify": v}
+    return {"html": html, "title": title, "verify": v, "slop": slop_warnings}

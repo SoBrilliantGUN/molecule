@@ -171,7 +171,7 @@ async def understand_spec(body: SpecBody) -> dict:
 
 @router.post("/runs")
 async def start_run(body: RunBody) -> dict:
-    """Start an async run (long DAG or short ReAct). Returns run_key immediately;
+    """Start an async run (ReAct 单次生成 + 三校核验). Returns run_key immediately;
     progress streams via GET /runs/{run_key}/events.
 
     新建应用会立即创建占位项目（name=提示词前 40 字），让「我的项目」实时看到生成中的条目；
@@ -197,7 +197,7 @@ async def start_run(body: RunBody) -> dict:
 
 @router.get("/runs/{run_key}/events")
 async def run_events(run_key: str) -> StreamingResponse:
-    """SSE stream of stage/dag/verify/done/error events for a run."""
+    """SSE stream of stage/verify/done/error events for a run."""
     stream = await run_manager.make_sse_stream(run_key)
     return StreamingResponse(stream, media_type="text/event-stream", headers=SSE_HEADERS)
 
