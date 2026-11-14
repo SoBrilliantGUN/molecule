@@ -19,18 +19,14 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-atoms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-atoms}
+      LANGGRAPH_CHECKPOINT_DSN: postgresql://${POSTGRES_USER:-atoms}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-atoms}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
       SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
-      LLM_MAIN_MODEL: ${LLM_MAIN_MODEL:-deepseek-ai/DeepSeek-V4-Flash}
       LLM_VERIFY_MODEL: ${LLM_VERIFY_MODEL:-zai-org/GLM-5.3}
-      LLM_INTENT_MODEL: ${LLM_INTENT_MODEL:-deepseek-ai/DeepSeek-V4-Flash}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
       FORGE_MAX_SECONDS: ${FORGE_MAX_SECONDS:-3600}
-      LANGGRAPH_CHECKPOINT_DB: /data/checkpoints.sqlite
-    volumes:
-      - checkpoints:/data
     depends_on:
       db:
         condition: service_healthy
@@ -45,4 +41,3 @@ services:
 
 volumes:
   pgdata:
-  checkpoints:

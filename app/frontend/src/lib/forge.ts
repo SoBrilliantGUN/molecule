@@ -26,7 +26,7 @@ export interface ChatMessage {
   id: number;
   role: 'user' | 'assistant';
   content: string;
-  meta?: { events?: TraceEvent[]; usage?: Usage; intent?: string; run_key?: string };
+  meta?: { events?: TraceEvent[]; usage?: Usage; run_key?: string; verify?: { score: number }; verify_failed?: boolean };
 }
 export interface SpecField {
   name: string;
@@ -96,6 +96,8 @@ export interface ForgeEvent {
     project_id?: number;
     name?: string;
     message?: string;
+    verify_failed?: boolean;
+    verify_score?: number;
   };
 }
 
@@ -160,7 +162,7 @@ export const forge = {
   races: () => call<Race[]>('GET', '/races'),
   race: (id: number) => call<Race>('GET', `/races/${id}`),
   selectRace: (id: number, model: string) => call<Project>('POST', `/races/${id}/select`, { model }),
-  streamRace: (raceId: number, onModel: (e: RaceModelEvent) => void, onDone: () => void) => {
+  streamRace: (raceId: number, onModel: (e: RaceModelEvent) => void, onDone: (data: { all_failed?: boolean }) => void) => {
     const es = new EventSource(`/api/v1/forge/races/${raceId}/events`);
     es.addEventListener('race_model', (ev: MessageEvent) => {
       try {
@@ -169,8 +171,12 @@ export const forge = {
         /* ignore malformed frame */
       }
     });
-    es.addEventListener('done', () => {
-      onDone();
+    es.addEventListener('done', (ev: MessageEvent) => {
+      try {
+        onDone(JSON.parse(ev.data as string) as { all_failed?: boolean });
+      } catch {
+        onDone({});
+      }
       es.close();
     });
     es.onerror = () => es.close();

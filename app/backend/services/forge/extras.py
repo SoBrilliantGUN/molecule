@@ -5,9 +5,8 @@ import logging
 import os
 
 from models.agent_runs import AgentRuns
-from models.chat_messages import ChatMessages
 from models.races import Races
-from services.forge import codegen, ops, repo
+from services.forge import persist, repo
 from services.forge.budget import Budget
 from services.forge.gateway import GatewayError, RunContext
 from services.forge.util import DomainError, dumps, loads
@@ -49,8 +48,11 @@ async def _race_worker(run_key: str, race_id: int, prompt: str, models: list[str
     from services.forge import run_manager
 
     results = await asyncio.gather(*(_race_one(run_key, prompt, m) for m in models))
-    await repo.update(Races, race_id, results_json=dumps({"items": results, "models": models}), status="done")
-    await run_manager.emit(run_key, "done", {"race_id": race_id})
+    all_failed = bool(results) and all(not r["ok"] for r in results)
+    # 所有路都失败时不标 done，前端据此提示「无可选方案」而不是显示一个空的对比页。
+    status = "error" if all_failed else "done"
+    await repo.update(Races, race_id, results_json=dumps({"items": results, "models": models}), status=status)
+    await run_manager.emit(run_key, "done", {"race_id": race_id, "all_failed": all_failed})
 
 
 async def start_race(prompt: str, models: list[str] | None = None, client_key: str | None = None) -> dict:
@@ -109,11 +111,13 @@ async def select_race(race_id: int, model: str) -> dict:
             break
     if chosen is None:
         raise DomainError("该方案不可选")
-    # 落库前与单模型 _persist_project 对齐：清理围栏/解释性前缀，避免残留文字随应用一起展示。
-    project = await ops.create_project(chosen.get("title") or race["prompt"][:40], codegen.sanitize_html(chosen["html"]), description=race["prompt"][:200])
+    # 复用单路 persist_result：清理围栏/解释性前缀 + 幂等落聊天历史，赛马与单路产物/记录口径一致。
+    project = await persist.persist_result(
+        project_id=None,
+        html=chosen["html"],
+        title=chosen.get("title", ""),
+        prompt=race["prompt"],
+        description=race["prompt"][:200],
+    )
     await repo.update(Races, race_id, selected_index=chosen_index, project_id=project["id"])
-    # 与单模型 `_persist_project` 对齐：把原始需求也落进聊天历史，否则赛马项目聊天框为空，
-    # 退出重进后「之前的对话内容消失」。
-    await repo.add(ChatMessages, project_id=project["id"], role="user", content=race["prompt"])
-    await repo.add(ChatMessages, project_id=project["id"], role="assistant", content=f"已生成「{project['name']}」。")
     return project

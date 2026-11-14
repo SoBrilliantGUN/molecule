@@ -156,3 +156,24 @@ def test_graph_concurrent_runs_share_checkpointer(tmp_path, monkeypatch):
     assert r1["html"] == VALID_HTML and r2["html"] == VALID_HTML
     # 两条线程各自跑完 normalize/plan/generate/verify 各一次，互不串 state
     assert calls == {"normalize": 2, "plan": 2, "generate": 2, "verify": 2}
+
+
+# ---------- _checkpoint_dsn：psycopg DSN 推导 ----------
+
+
+def test_checkpoint_dsn_explicit_env(monkeypatch):
+    monkeypatch.setenv("LANGGRAPH_CHECKPOINT_DSN", "postgresql://u:p@h:5432/db")
+    assert forge_react._checkpoint_dsn() == "postgresql://u:p@h:5432/db"
+
+
+def test_checkpoint_dsn_derives_from_database_url(monkeypatch):
+    monkeypatch.delenv("LANGGRAPH_CHECKPOINT_DSN", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@h:5432/db")
+    assert forge_react._checkpoint_dsn() == "postgresql://u:p@h:5432/db"
+
+
+def test_checkpoint_dsn_rejects_non_postgres(monkeypatch):
+    monkeypatch.delenv("LANGGRAPH_CHECKPOINT_DSN", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./atoms.db")
+    with pytest.raises(RuntimeError):
+        forge_react._checkpoint_dsn()

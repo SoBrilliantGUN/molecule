@@ -14,8 +14,9 @@
                 └── 通过 / 额度耗尽 / degraded ── finish → END
 
 所有 LLM 调用都走 ``gateway.chat``（budget / breaker / accounting）。checkpoint 持久化到
-SQLite（``LANGGRAPH_CHECKPOINT_DB``），``thread_id = run_key``，崩溃重启后同 run_key 续跑，
-跳过已完成节点；单次 ``codegen.generate``（最贵的一步）中断仍会从头重跑（节点级恢复）。
+PostgreSQL（``LANGGRAPH_CHECKPOINT_DSN``，psycopg DSN），``thread_id = run_key``，崩溃重启后
+同 run_key 续跑，跳过已完成节点；单次 ``codegen.generate``（最贵的一步）中断仍会从头重跑
+（节点级恢复）。checkpoint 表由 ``AsyncPostgresSaver.setup()`` 建（与主库同库）。
 """
 
 from __future__ import annotations
@@ -23,10 +24,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from typing import TypedDict
 
-import aiosqlite
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
 
 from services.forge import gateway
@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 
 VERIFY_PASS_SCORE = float(os.environ.get("VERIFY_PASS_SCORE", "0.7"))
 REACT_MAX_RETRY = int(os.environ.get("REACT_MAX_RETRY", "2"))
-CHECKPOINT_DB = os.environ.get("LANGGRAPH_CHECKPOINT_DB", "checkpoints.sqlite")
 
 # short task: generate a compact verify checklist from the requirement in one tiny call
 PLAN_CHECKS_SYSTEM = (
@@ -237,23 +236,56 @@ def _build_graph() -> StateGraph:
     return g
 
 
-# ---------- 编译 + checkpoint 惰性初始化（单进程复用同一连接/图） ----------
+# ---------- 编译 + checkpoint 惰性初始化（单进程复用同一连接池/图） ----------
 
 _graph = None
 _checkpointer = None
-_conn = None
 _init_lock = asyncio.Lock()
 
 
+def _checkpoint_dsn() -> str:
+    """Resolve the psycopg DSN for the LangGraph Postgres checkpointer.
+
+    LangGraph 的 Postgres saver 用 psycopg3，不理解 SQLAlchemy 的 ``+asyncpg`` 驱动后缀，
+    所以优先读专用 ``LANGGRAPH_CHECKPOINT_DSN``，否则从 ``DATABASE_URL`` 剥掉异步驱动前缀推导。
+    与主库同库（不另起一个数据库），checkpoint 表名独立，互不干扰。
+    """
+    dsn = os.environ.get("LANGGRAPH_CHECKPOINT_DSN", "").strip()
+    if not dsn:
+        dsn = re.sub(
+            r"^(postgres|postgresql)\+[a-z0-9]+://",
+            r"postgresql://",
+            os.environ.get("DATABASE_URL", "").strip(),
+        )
+    if not dsn.startswith(("postgresql://", "postgres://")):
+        raise RuntimeError(
+            "LangGraph checkpoint 需要 PostgreSQL：请设置 LANGGRAPH_CHECKPOINT_DSN（psycopg DSN，如 postgresql://user:pass@host:5432/db）"
+        )
+    return dsn
+
+
 async def _get_graph():
-    global _graph, _checkpointer, _conn
+    global _graph, _checkpointer
     if _graph is not None:
         return _graph
     async with _init_lock:
         if _graph is not None:
             return _graph
-        _conn = await aiosqlite.connect(CHECKPOINT_DB)
-        _checkpointer = AsyncSqliteSaver(_conn)
+        # 懒导入：psycopg/checkpoint-postgres 只在真正初始化 checkpoint 时加载，
+        # 模块级 import 保持轻量（测试直接 import forge_react 无需装这些包）。
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        from psycopg.rows import dict_row
+        from psycopg_pool import AsyncConnectionPool
+
+        # 与 AsyncPostgresSaver.from_conn_string 相同的连接选项（autocommit 让 .setup()
+        # 的建表 DDL 立即提交；prepare_threshold=0 禁用服务端预编译，兼容 PgBouncer）。
+        pool = AsyncConnectionPool(
+            _checkpoint_dsn(),
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+            open=False,
+        )
+        await pool.open()
+        _checkpointer = AsyncPostgresSaver(pool)
         await _checkpointer.setup()
         _graph = _build_graph().compile(checkpointer=_checkpointer)
         return _graph

@@ -50,7 +50,7 @@ ReAct 生成，不再需要路由。新建 / 迭代的差异只剩「有无现�
 ## 五、断点续跑的真实形态
 
 DAG 的「阶段级 checkpoint + 续跑」随 DAG 一起退役，但「断点续跑」能力没有丢——它以 LangGraph
-StateGraph 的 SQLite checkpoint 形态保留下来（`forge_react.py` 把 ReAct 循环编译成图，每个节点边界
+StateGraph 的 PostgreSQL checkpoint 形态保留下来（`forge_react.py` 把 ReAct 循环编译成图，每个节点边界
 = 一个 checkpoint 点）：
 
 - 后端崩溃后，`run_manager.resume_interrupted_runs()` 把卡在 `running` 的 run 重新拉起；

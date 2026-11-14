@@ -31,6 +31,8 @@ export default function CreatePage() {
   const [project, setProject] = useState<Project | null>(null);
   const [busy, setBusy] = useState(false);
   const [modify, setModify] = useState('');
+  // 核验未通过（score < 0.7）时后端仍返回当前结果，这里给用户一个可见的警示而非绿点完成。
+  const [verifyWarn, setVerifyWarn] = useState<{ score: number } | null>(null);
 
   // 赛马
   const [raceId, setRaceId] = useState<number | null>(null);
@@ -42,6 +44,7 @@ export default function CreatePage() {
   const runSingle = useCallback((message: string, projectId?: number, clientKey?: string) => {
     setBusy(true);
     setEvents([]);
+    setVerifyWarn(null);
     forge
       .startRun({ message, project_id: projectId, client_key: clientKey })
       .then(({ run_key }) => {
@@ -50,6 +53,7 @@ export default function CreatePage() {
           (e) => setEvents((prev) => [...prev, e.data.text ?? '']),
           (data) => {
             setBusy(false);
+            if (data.verify_failed) setVerifyWarn({ score: data.verify_score ?? 0 });
             if (data.project_id != null) {
               forge.project(data.project_id).then(setProject).catch(() => undefined);
             }
@@ -79,7 +83,10 @@ export default function CreatePage() {
         forge.streamRace(
           id,
           applyRaceEvent,
-          () => setRaceDone(true),
+          (data) => {
+            setRaceDone(true);
+            if (data?.all_failed) toast.error('所有方案都生成失败，请换一个需求重试');
+          },
         );
       })
       .catch((e) => toast.error((e as Error).message));
@@ -100,7 +107,10 @@ export default function CreatePage() {
           forge.streamRace(
             id,
             applyRaceEvent,
-            () => setRaceDone(true),
+            (data) => {
+              setRaceDone(true);
+              if (data?.all_failed) toast.error('所有方案都生成失败，请换一个需求重试');
+            },
           );
         }
       })
@@ -224,6 +234,14 @@ export default function CreatePage() {
             </div>
           </div>
           <div className="flex flex-col gap-3">
+            {verifyWarn && (
+              <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
+                <span className="shrink-0">⚠️</span>
+                <span>
+                  核验未通过（{Math.round((verifyWarn.score ?? 0) * 100)}%）。已返回当前结果，部分功能可能缺失——可在下方继续用一句话修改。
+                </span>
+              </div>
+            )}
             {project?.html ? (
               <iframe title={project.name} srcDoc={project.html} sandbox="allow-scripts allow-same-origin allow-modals allow-forms" className="h-[420px] w-full rounded-xl border border-border bg-white" />
             ) : (

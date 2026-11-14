@@ -23,12 +23,11 @@ from services.forge.util import DomainError, sha
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = os.environ.get("LLM_MAIN_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
-
 # 主生成走 DeepSeek 官方 API（更快更稳）；核验（跨家换脑）才走 SiliconFlow。
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
-# DeepSeek 挂了之后的 fallback 模型（SiliconFlow 侧的 DeepSeek 等价物）。
+# DeepSeek 挂了之后的 fallback 模型（SiliconFlow 侧的 DeepSeek 等价物）；也兼作 provider=siliconflow
+# 且未显式指定 model 时的默认模型（verify/赛马都显式传 model，此默认仅作兜底）。
 DEEPSEEK_FALLBACK_MODEL = os.environ.get("DEEPSEEK_FALLBACK_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
 
 # 按 provider 分熔断器：DeepSeek 的失败不能把 SiliconFlow 的 fallback 一起熔断。
@@ -121,8 +120,6 @@ PRICING: dict[str, PricingStrategy] = {
     "deepseek-v4-flash": PricingStrategy(0.5, 2),
     "deepseek-ai/DeepSeek-V4-Flash": PricingStrategy(0.5, 2),
     "deepseek-ai/DeepSeek-V4-Pro": PricingStrategy(2, 8),
-    "Qwen/Qwen3-Coder-480B-A35B-Instruct": PricingStrategy(2, 8),
-    "Qwen/Qwen3-235B-A22B-Instruct": PricingStrategy(1, 3),
     "zai-org/GLM-5.3": PricingStrategy(1, 4),
     # 赛马候选模型（SiliconFlow）：缺了会掉进 FALLBACK_PRICING，成本被高估 ~10 倍。
     # 数值为估值，接入真实计费前请以硅基流动官方价核对。
@@ -196,7 +193,7 @@ async def chat(
     thinking: bool | None = None,  # None=默认；False=关闭思考（推理型模型关闭后快很多）
 ) -> LLMResult:
     client = _get_deepseek_client() if provider != "siliconflow" else _get_client()
-    model = model or (DEEPSEEK_MODEL if provider != "siliconflow" else DEFAULT_MODEL)
+    model = model or (DEEPSEEK_MODEL if provider != "siliconflow" else DEEPSEEK_FALLBACK_MODEL)
     breaker_keys = BREAKER_KEYS.get(provider, BREAKER_KEYS["deepseek"])
     policy = policy or RetryPolicy()
     ctx.budget.check()
@@ -258,8 +255,9 @@ async def chat(
             await asyncio.sleep(policy.delay(attempt))
     await breakers.record(breaker_keys, False)
     await _record(ctx, purpose, model, call_key, "error", error=str(last_exc)[:500])
-    if provider == "deepseek":
-        # DeepSeek 挂了（有限重试后仍失败）→ fallback 到 SiliconFlow 用对应模型再试一次
+    # DeepSeek 挂了才 fallback 到 SiliconFlow——只对**瞬态故障**（超时/限流/5xx/连接）切换。
+    # 永久性错误（鉴权失败/内容过滤/参数错）换了 provider 也无济于事，直接上抛，避免白打一次调用。
+    if provider == "deepseek" and last_exc is not None and is_retryable(last_exc):
         logger.warning("deepseek provider failed（%s），fallback 到 siliconflow model=%s", last_exc, DEEPSEEK_FALLBACK_MODEL)
         return await chat(
             ctx, messages,

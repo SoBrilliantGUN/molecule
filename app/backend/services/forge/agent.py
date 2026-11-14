@@ -9,8 +9,7 @@
 import logging
 
 from models.agent_runs import AgentRuns
-from models.chat_messages import ChatMessages
-from services.forge import codegen, ops, repo, seed
+from services.forge import ops, persist, repo, seed
 from services.forge.budget import Budget
 from services.forge.gateway import RunContext
 from services.forge.util import dumps
@@ -99,24 +98,13 @@ async def _run_classified(ctx: RunContext, emit, prompt: str, project_id: int | 
 
 
 async def _persist_project(ctx: RunContext, out: dict, prompt: str, project_id: int | None) -> dict:
-    """Persist the final HTML into a project (+ chat messages). project_id None -> create new."""
-    html = codegen.sanitize_html(out["html"])
-    title = out.get("title") or prompt[:40]
-    if project_id is not None:
-        project = await ops.update_project_html(project_id, html, title)
-    else:
-        project = await ops.create_project(title, html, description=prompt[:200])
-    # 幂等：崩溃续跑会再次进入此处，若项目已存在同 prompt 的用户消息（上次已落过）则跳过，
-    # 避免续跑产生重复的 user/assistant 聊天记录。
-    dup = await repo.find(
-        ChatMessages,
-        ChatMessages.project_id == project["id"],
-        ChatMessages.role == "user",
-        ChatMessages.content == prompt,
-        limit=1,
+    """Persist the final HTML into a project (+ idempotent chat messages). project_id None -> create new."""
+    return await persist.persist_result(
+        project_id=project_id,
+        html=out["html"],
+        title=out.get("title", ""),
+        prompt=prompt,
+        verify=out.get("verify", {}),
+        verify_failed=bool(out.get("verify_failed")),
+        usage=ctx.budget.snapshot(),
     )
-    if not dup:
-        await repo.add(ChatMessages, project_id=project["id"], role="user", content=prompt)
-        meta = {"usage": ctx.budget.snapshot(), "verify": out.get("verify", {}), "verify_failed": bool(out.get("verify_failed"))}
-        await repo.add(ChatMessages, project_id=project["id"], role="assistant", content=f"已生成「{project['name']}」。", meta_json=dumps(meta))
-    return project

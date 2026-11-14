@@ -178,7 +178,7 @@ async def run_events(run_key: str) -> StreamingResponse:
 @router.get("/runs")
 async def runs() -> list[dict]:
     rows = await repo.find(AgentRuns, order=AgentRuns.id.desc(), limit=30)
-    return [{"run_key": r["run_key"], "project_id": r["project_id"], "intent": r["intent"], "status": r["status"], "input": (r["user_input"] or "")[:80], "usage": loads(r["usage_json"], {}), "created_at": r["created_at"]} for r in rows]
+    return [{"run_key": r["run_key"], "project_id": r["project_id"], "status": r["status"], "input": (r["user_input"] or "")[:80], "created_at": r["created_at"]} for r in rows]
 
 
 @router.get("/usage")

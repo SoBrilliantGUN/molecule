@@ -19,7 +19,9 @@ from services.forge.util import extract_json
 
 logger = logging.getLogger(__name__)
 
-SPEC_MODEL = os.environ.get("LLM_SPEC_MODEL") or os.environ.get("LLM_INTENT_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
+# 可选覆盖：默认 None → 需求理解走 gateway 默认（DeepSeek 官方 deepseek-v4-flash）。
+# 之前回退到 LLM_INTENT_MODEL（硅基流动命名），却仍走 provider=deepseek 官方，模型名错配。
+SPEC_MODEL = os.environ.get("LLM_SPEC_MODEL") or None
 
 # 追问必须是「有默认答案、用户可跳过」的封闭式问题，绝不能逐条连环审问。
 SPEC_SYSTEM = (

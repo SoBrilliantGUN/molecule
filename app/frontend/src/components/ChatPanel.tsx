@@ -55,7 +55,7 @@ export default function ChatPanel({ projectId, onChanged }: Props) {
         run_key,
         (e) => setLiveEvents((ev) => [...ev, { kind: e.type, text: e.data.text ?? '' }]),
         () => {
-          setMessages((m) => [...m, { id: Date.now() + 1, role: 'assistant', content: '已完成这一步。', meta: { intent: 'iterate' } }]);
+          setMessages((m) => [...m, { id: Date.now() + 1, role: 'assistant', content: '已完成这一步。' }]);
           onChanged();
           setBusy(false);
         }
@@ -75,6 +75,11 @@ export default function ChatPanel({ projectId, onChanged }: Props) {
             <div className={m.role === 'user' ? 'max-w-[88%] bg-sunk px-3 py-2 text-sm' : 'border-l-2 border-border pl-3 text-sm'}>
               <p className="whitespace-pre-wrap">{m.content}</p>
               {m.role === 'assistant' && <Trace events={m.meta?.events} />}
+              {m.meta?.verify_failed && (
+                <p className="mt-1 text-xs text-amber-700">
+                  ⚠️ 核验未通过（{Math.round((m.meta.verify?.score ?? 0) * 100)}%），可继续修改。
+                </p>
+              )}
               {m.meta?.usage && (
                 <p className="mt-1 font-mono-ui text-[11px] text-muted-foreground">
                   {m.meta.usage.tokens} tokens · ¥{m.meta.usage.cost_cny} · {m.meta.usage.turns} 轮

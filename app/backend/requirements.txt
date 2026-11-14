@@ -18,7 +18,10 @@ aiosqlite>=0.20.0
 greenlet
 # LLM gateway (SiliconFlow, OpenAI-compatible)
 openai==2.16.0
-# Agent orchestration (LangGraph StateGraph + SQLite checkpoint 断点续跑)
+# Agent orchestration (LangGraph StateGraph + PostgreSQL checkpoint 断点续跑)
 langgraph>=0.2.0
+langgraph-checkpoint-postgres>=3.0.0
+psycopg[binary]>=3.2.0
+# 仅测试用：图级断点续跑测试无需真 PG，用临时 SQLite checkpoint 跑（生产走 Postgres）
 langgraph-checkpoint-sqlite>=2.0.0
 

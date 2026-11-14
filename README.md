@@ -31,9 +31,9 @@
 
 | 层 | 技术 |
 |---|---|
-| 后端 | FastAPI · SQLAlchemy 2.0 (async) · Alembic · LangGraph（StateGraph + SQLite checkpoint）· OpenAI 兼容 SDK（DeepSeek 官方 + SiliconFlow） |
+| 后端 | FastAPI · SQLAlchemy 2.0 (async) · Alembic · LangGraph（StateGraph + PostgreSQL checkpoint）· OpenAI 兼容 SDK（DeepSeek 官方 + SiliconFlow） |
 | 前端 | React 18 · TypeScript · Vite · Tailwind CSS · shadcn/ui · React Query · react-router-dom · sonner |
-| 数据库 | PostgreSQL（docker-compose 默认）；本地可切 SQLite |
+| 数据库 | PostgreSQL（主库 + LangGraph checkpoint 同库，docker-compose 默认） |
 | 部署 | Docker Compose（nginx 前端 :80 反代 `/api` → FastAPI，PostgreSQL 持久卷） |
 
 ## 快速开始
@@ -55,11 +55,11 @@ docker compose up -d --build
 ### 方式二：本地开发
 
 ```bash
-# 后端（需先准备 Postgres 或 SQLite + 环境变量）
+# 后端（需 PostgreSQL：主库 + LangGraph checkpoint 都走 PG）
 cd app/backend
 pip install -r requirements.txt
-export DATABASE_URL=postgresql+asyncpg://atoms:change-me@localhost:5432/atoms   # 或用 SQLite 快速起：
-# export DATABASE_URL=sqlite+aiosqlite:///./atoms.db
+export DATABASE_URL=postgresql+asyncpg://atoms:change-me@localhost:5432/atoms
+export LANGGRAPH_CHECKPOINT_DSN=postgresql://atoms:change-me@localhost:5432/atoms
 export DEEPSEEK_API_KEY=sk-xxx
 export SILICONFLOW_API_KEY=sk-xxx
 alembic upgrade head
@@ -76,10 +76,11 @@ pnpm dev
 见 `.env.example`。关键项：
 
 - `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` — 主生成模型（DeepSeek 官方，更快更稳）
-- `SILICONFLOW_API_KEY` / `SILICONFLOW_BASE_URL` — 核验模型（跨家换脑，赛马打分/阶段核验）
-- `LLM_MAIN_MODEL` / `LLM_VERIFY_MODEL` / `LLM_INTENT_MODEL` — 模型路由
+- `SILICONFLOW_API_KEY` / `SILICONFLOW_BASE_URL` — 核验模型（跨家换脑，赛马/阶段核验）
+- `LLM_VERIFY_MODEL` — 核验模型（跨家换脑）
 - `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` — 数据库（docker-compose 自动拼 `DATABASE_URL`）
 - `DATABASE_URL` — 本地手动运行时必填
+- `LANGGRAPH_CHECKPOINT_DSN` — checkpoint 的 psycopg DSN（与主库同库；未设则从 `DATABASE_URL` 剥 `+asyncpg` 推导）
 
 > 没有 API Key 也能演示：内置「读书笔记 / 健身打卡 / 招聘跟进」三个预生成示例，命中即返回缓存 HTML，不消耗额度。
 
@@ -92,6 +93,7 @@ app/
 │   ├── routers/forge.py        # HTTP API（项目 / 运行 / SSE / 赛马 / 发布分享）
 │   ├── services/forge/         # 核心生成链路
 │   │   ├── agent.py            #   异步 run 入口 + 落库（_run_forge）
+│   │   ├── persist.py          #   共享落库（幂等聊天记录 + 用量/核验 meta）
 │   │   ├── forge_react.py      #   ReAct 三校核验（LangGraph StateGraph + checkpoint）
 │   │   ├── verify.py           #   结构校验 + 跨模型核验 + 反 AI 味检查（slop_checks）
 │   │   ├── codegen.py          #   单文件 HTML 生成（注入视觉规范）
