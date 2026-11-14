@@ -44,11 +44,13 @@ def side_effect_checks(html: str) -> list[str]:
         violations.append("存在未闭合的 <script>")
     if "<style" in low and "</style>" not in low:
         violations.append("存在未闭合的 <style>")
+    # 外链检测：`(?:https?:)?//` 同时覆盖 `https://` 与协议相对 `//`；`\.js\b` 用词边界，
+    # 让带查询串的 `x.js?v=2` 也能命中（原来要求 `.js` 结尾，`?v=2` 会漏）。
     for pat, label in (
-        (r'src\s*=\s*["\']\s*https?://[^"\']+\.js', "外链 JS"),
-        (r'href\s*=\s*["\']\s*https?://[^"\']+\.css', "外链 CSS"),
+        (r'src\s*=\s*["\']\s*(?:https?:)?//[^"\']*\.js\b', "外链 JS"),
+        (r'href\s*=\s*["\']\s*(?:https?:)?//[^"\']*\.css\b', "外链 CSS"),
     ):
-        if re.search(pat, low):
+        if re.search(pat, low, re.IGNORECASE):
             violations.append("存在" + label + "（应全部内联）")
     return violations
 
@@ -60,6 +62,19 @@ VERIFY_SYSTEM = (
 )
 
 
+def _verifier_view(html: str, head: int = 20000, tail: int = 20000) -> str:
+    """给核验模型的 HTML 视图：保留头部（doctype/head/首屏结构）+ 尾部（脚本/表单/空状态）。
+
+    之前只传 `html[:12000]`，长文件底部的脚本、表单、空状态（恰好是「交互真实 /
+    存储安全 / 空状态」这些核验项要查的地方）整段不被核验。头尾各留 20000 字符，
+    中间用注释占位，既控长度又保证关键区段都能被看到。
+    """
+    h = html or ""
+    if len(h) <= head + tail:
+        return h
+    return h[:head] + "\n<!-- …中间部分已省略（为控制核验长度）… -->\n" + h[-tail:]
+
+
 async def verify_html(ctx: RunContext, verify_items: list[str], html: str) -> dict:
     """A *different* model checks each verify_item against the HTML → score."""
     if not verify_items:
@@ -69,7 +84,7 @@ async def verify_html(ctx: RunContext, verify_items: list[str], html: str) -> di
             ctx,
             [
                 {"role": "system", "content": VERIFY_SYSTEM},
-                {"role": "user", "content": "核验项：\n" + "\n".join(f"- {v}" for v in verify_items) + "\n\nHTML：\n" + html[:12000]},
+                {"role": "user", "content": "核验项：\n" + "\n".join(f"- {v}" for v in verify_items) + "\n\nHTML：\n" + _verifier_view(html)},
             ],
             purpose="verify",
             model=VERIFY_MODEL,
@@ -89,9 +104,12 @@ async def verify_html(ctx: RunContext, verify_items: list[str], html: str) -> di
         if not missing:
             missing = [it for it in items if checked.get(it) is not True]
         return {"checked": checked, "missing": missing, "score": round(score, 2)}
-    except Exception as exc:  # noqa: BLE001 - verifier failure is not fatal; degrade conservatively
-        logger.warning("verify_html 失败（%s），降级为通过", exc)
-        return {"checked": {}, "missing": [], "score": 1.0}
+    except Exception as exc:  # noqa: BLE001 - verifier failure must fail CLOSED, never fake a pass
+        # 核验模型不可用是「没查」，不是「通过」。fail-open 到 score=1.0 会让三重校验
+        # 在最需要兜底的时刻静默放行。这里 fail-closed：记 degraded、按不通过返回，
+        # 调用方据此给用户一个「核验未执行」的可见警示，而不是假装已验证。
+        logger.warning("verify_html 失败（%s），核验未执行，按不通过处理", exc)
+        return {"checked": {}, "missing": ["核验模型不可用，本次未执行跨模型核验"], "score": 0.0, "degraded": True}
 
 
 # ======================================================================

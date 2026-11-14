@@ -124,12 +124,23 @@ PRICING: dict[str, PricingStrategy] = {
     "Qwen/Qwen3-Coder-480B-A35B-Instruct": PricingStrategy(2, 8),
     "Qwen/Qwen3-235B-A22B-Instruct": PricingStrategy(1, 3),
     "zai-org/GLM-5.3": PricingStrategy(1, 4),
+    # 赛马候选模型（SiliconFlow）：缺了会掉进 FALLBACK_PRICING，成本被高估 ~10 倍。
+    # 数值为估值，接入真实计费前请以硅基流动官方价核对。
+    "Qwen/Qwen3-Coder-30B-A3B-Instruct": PricingStrategy(1, 4),
 }
 FALLBACK_PRICING = PricingStrategy(10, 40)
 
 
 def estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 3)
+    """粗估 token 数，仅在 usage 缺失时兜底。
+
+    之前 `len()//3` 对中文严重低估（一个汉字 ≈1 token，而非 1/3）。这里把 CJK 字按
+    1 token/字计，其余按 ~4 字符/token 计。
+    """
+    t = text or ""
+    cjk = sum(1 for c in t if "一" <= c <= "鿿")
+    other = len(t) - cjk
+    return max(1, cjk + other // 4)
 
 
 @dataclass

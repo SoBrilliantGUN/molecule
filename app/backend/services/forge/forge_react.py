@@ -101,6 +101,8 @@ async def generate_verified(
     attempts = 0
     missing: list[str] = []
     slop_warnings: list[dict] = []
+    # 结构校验可能连续失败多轮，loop 退出时 v 可能尚未赋值（UnboundLocalError），先给默认。
+    v: dict = {"score": 0.0, "checked": {}, "missing": []}
     while attempts <= REACT_MAX_RETRY:
         focus = f"\n特别补齐此前未通过的核验项：{'；'.join(missing[:4])}" if missing else ""
         await emit("verify", {"text": f"第 {attempts + 1} 轮：正在生成完整应用（模型思考中，约需 1–2 分钟）…" + (f"（补齐：{'、'.join(missing[:3])}）" if missing else ""), "score": 0.0, "passed": False, "attempt": attempts + 1})
@@ -128,6 +130,11 @@ async def generate_verified(
 
         # ② a different model checks each verify_item
         v = await verify_html(ctx, checks, html)
+        # 核验模型不可用（degraded）≠ 通过：结构/反 AI 味已过，但跨模型核验没执行，
+        # 直接带警示返回，别把重试额度浪费在「换模型也无法修复的核验故障」上。
+        if v.get("degraded"):
+            await emit("verify", {"text": "跨模型核验当前不可用，本次未执行核验（结构校验与反 AI 味检查已通过）", "score": 0.0, "passed": False, "missing": v["missing"], "degraded": True})
+            return {"html": html, "title": title, "verify": v, "slop": slop_warnings}
         # ③ program score
         passed = v["score"] >= VERIFY_PASS_SCORE
         await emit(

@@ -11,6 +11,7 @@ from services.forge import codegen, ops, repo
 from services.forge.budget import Budget
 from services.forge.gateway import GatewayError, RunContext
 from services.forge.util import DomainError, dumps, loads
+from services.forge.verify import side_effect_checks, slop_checks, slop_p0_messages
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,13 @@ async def _race_one(run_key: str, prompt: str, model: str) -> dict:
     try:
         await emit("race_model", {"model": model, "status": "running", "text": "生成 HTML…"})
         out = await codegen.generate(ctx, prompt, model=model, provider="siliconflow")
+        # 赛马候选同样过确定性质量闸门（结构 + 反 AI 味 P0），否则会把坏 HTML 摆进对比让用户选。
+        violations = side_effect_checks(out["html"])
+        p0 = slop_p0_messages(slop_checks(out["html"]))
+        if violations or p0:
+            reason = "；".join((violations + p0)[:2])
+            await emit("race_model", {"model": model, "status": "error", "text": f"质量闸门未过：{reason}"})
+            return {"model": model, "ok": False, "error": f"质量闸门未过：{reason}"}
         await emit("race_model", {"model": model, "status": "done", "title": out["title"], "html": out["html"]})
         return {"model": model, "ok": True, "title": out["title"], "html": out["html"]}
     except (DomainError, GatewayError) as exc:
@@ -87,7 +95,8 @@ async def select_race(race_id: int, model: str) -> dict:
             break
     if chosen is None:
         raise DomainError("该方案不可选")
-    project = await ops.create_project(chosen.get("title") or race["prompt"][:40], chosen["html"], description=race["prompt"][:200])
+    # 落库前与单模型 _persist_project 对齐：清理围栏/解释性前缀，避免残留文字随应用一起展示。
+    project = await ops.create_project(chosen.get("title") or race["prompt"][:40], codegen.sanitize_html(chosen["html"]), description=race["prompt"][:200])
     await repo.update(Races, race_id, selected_index=chosen_index, project_id=project["id"])
     # 与单模型 `_persist_project` 对齐：把原始需求也落进聊天历史，否则赛马项目聊天框为空，
     # 退出重进后「之前的对话内容消失」。

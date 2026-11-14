@@ -1,14 +1,15 @@
-"""LangGraph single-agent graph: intent -> generate -> save.
+"""Forge agent：真正的生成入口是 `_run_forge`（异步 run + ReAct 三校核验）。
 
-One reactive graph with an intent router. `create` (new app from a one-liner) and
-`iterate` (edit an existing app) share the same graph — they differ only in initial
-state. Every run is recorded to `agent_runs` for observability.
-
-intent -> generate -> save -> END
+注意：这里还保留了一条 LangGraph 直线图（intent → generate → save），但它**不是**当前
+前端走的路——前端统一走 `POST /runs` → `start_forge` → `_run_forge` → `generate_verified`。
+`chat` / `create_from_prompt`（对应 `POST /projects/{id}/chat`、`POST /projects`）是早期
+遗留的同步兼容路径，前端已不调用；图里的 `intent` 节点也不再路由（只给 build/iterate
+打个标签），两条路最终都进同一个 generate。保留它是为了沿用 StateGraph 编排结构作为
+演示叙事，但它的生成走的是 `codegen.generate` 单次直调，**未接三校核验**——若要继续
+留着，应把它也切到 `generate_verified`，否则是两条质量不一致的链路。
 """
 
 import logging
-import os
 import uuid
 from operator import add
 from typing import Annotated, Any, TypedDict
@@ -23,8 +24,6 @@ from services.forge.gateway import GatewayError, RunContext
 from services.forge.util import DomainError, dumps
 
 logger = logging.getLogger(__name__)
-
-FAST_MODEL = os.environ.get("LLM_INTENT_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
 
 
 class ForgeState(TypedDict, total=False):
@@ -42,7 +41,7 @@ class ForgeState(TypedDict, total=False):
 # ---------- nodes ----------
 
 async def _intent_node(state: ForgeState, ctx: RunContext) -> dict:
-    """Route intent: 'build' (new app) vs 'iterate' (edit existing). Fail-open to build."""
+    """给 build/iterate 打个标签（仅用于事件展示，不再路由——两条路都走同一 generate）。"""
     message = state["message"]
     if state.get("project_id") is not None:
         intent = "iterate"
@@ -231,7 +230,6 @@ async def _persist_project(ctx: RunContext, out: dict, prompt: str, project_id: 
 async def chat(project_id: int, message: str, model: str | None = None) -> dict:
     """Iterate: new requirement applied on top of the existing HTML."""
     project = await ops.get_project(project_id)
-    history = (await repo.find(ChatMessages, ChatMessages.project_id == project_id, order=ChatMessages.id.desc(), limit=6))[::-1]
     await repo.add(ChatMessages, project_id=project_id, role="user", content=message)
     state: ForgeState = {
         "message": message,
