@@ -31,6 +31,8 @@ export default function Home() {
   const [specBusy, setSpecBusy] = useState(false);
   const [spec, setSpec] = useState<SpecResult | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // 底部「其他补充」全局输入框（可选，留空则不追加）。
+  const [note, setNote] = useState('');
   // 澄清倒计时（秒）与「是否已因超时自动生成」防重入标记。
   const [countdown, setCountdown] = useState(CLARIFY_SECONDS);
   const timedOutRef = useRef(false);
@@ -52,9 +54,11 @@ export default function Home() {
     if (adv.theme) extra.push(`风格：${adv.theme}`);
     if (withAnswers && spec) {
       for (const q of spec.questions) {
-        const v = (answers[q.key] ?? q.default).trim();
+        // 下拉选「不指定」或输入留空 → 该追问跳过，不写进 prompt。
+        const v = (answers[q.key] ?? '').trim();
         if (v) extra.push(`${q.question.replace(/[?？]\s*$/, '')}：${v}`);
       }
+      if (note.trim()) extra.push(`补充：${note.trim()}`);
     }
     return extra.length ? `${prompt.trim()}\n【补充要求】\n${extra.map((e) => `- ${e}`).join('\n')}` : prompt.trim();
   };
@@ -102,6 +106,7 @@ export default function Home() {
           init[q.key] = q.default;
         });
         setAnswers(init);
+        setNote('');
         setSpec(res);
         return;
       }
@@ -220,43 +225,38 @@ export default function Home() {
                     <div key={q.key}>
                       <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">{q.question}</label>
                       {q.type === 'select' && q.options.length ? (
-                        <div>
-                          <input
-                            value={answers[q.key] ?? q.default}
-                            onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
-                            placeholder="选择或直接输入"
-                            className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
-                          />
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {q.options.map((o) => {
-                              const active = (answers[q.key] ?? q.default) === o;
-                              return (
-                                <button
-                                  key={o}
-                                  type="button"
-                                  onClick={() => setAnswers((prev) => ({ ...prev, [q.key]: o }))}
-                                  className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
-                                    active
-                                      ? 'border-primary bg-primary/10 text-primary'
-                                      : 'border-border bg-sunk text-muted-foreground hover:border-primary hover:text-primary'
-                                  }`}
-                                >
-                                  {o}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
+                        <select
+                          value={answers[q.key] ?? q.default}
+                          onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
+                          className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
+                        >
+                          <option value="">不指定</option>
+                          {q.options.map((o) => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </select>
                       ) : (
                         <input
                           value={answers[q.key] ?? q.default}
                           onChange={(e) => setAnswers((prev) => ({ ...prev, [q.key]: e.target.value }))}
-                          placeholder="输入你的答案"
                           className="h-9 w-full rounded-lg border border-border bg-white px-2.5 text-sm outline-none focus:border-primary"
                         />
                       )}
                     </div>
                   ))}
+                </div>
+
+                <div className="mt-3">
+                  <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">其他补充（可选）</label>
+                  <textarea
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    rows={2}
+                    placeholder="还有什么要补充的，直接写在这里"
+                    className="w-full resize-none rounded-lg border border-border bg-white px-2.5 py-2 text-sm outline-none focus:border-primary"
+                  />
                 </div>
 
                 <div className="mt-6 flex items-center justify-between gap-3">
