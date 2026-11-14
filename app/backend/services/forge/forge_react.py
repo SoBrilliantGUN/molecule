@@ -51,6 +51,10 @@ PLAN_CHECKS_SYSTEM = (
 # 生成物因「localStorage 不可用」而卡在加载态 / 阻断录入。
 _STORAGE_SAFETY = "数据用 localStorage 持久化**完整工作状态**（所有记录/当前游戏局面，而非只存一个统计值如最高分），且读写有 try/catch 兜底、存储不可用时应用仍能完整使用（不卡加载、不阻断录入）"
 
+# 交互正确性也是硬约束：生成物是「点哪改哪」的交互应用，模型常犯「用显示文本 indexOf 定位 +
+# 每次交互整块 innerHTML 重建」的错——会串位、杀动画，导致「点了这张却像翻了别张」。强制进核验清单。
+_PRECISE_INTERACTION = "交互更新精准就地：点/操作哪个元素就只改哪个元素（用数据下标 index 或唯一 id 定位，不用显示文本 indexOf 匹配），不整块 innerHTML 重建列表（避免顺序错乱、CSS 过渡动画丢失）"
+
 
 class ForgeState(TypedDict, total=False):
     requirement: str
@@ -73,6 +77,7 @@ async def plan_checks(ctx: RunContext, requirement: str) -> list[str]:
         "内联所有 CSS 与 JS，不引用外部 JS/CSS（字体除外）",
         _STORAGE_SAFETY,
         "有真实交互：能新增/编辑/删除/勾选一项内容",
+        _PRECISE_INTERACTION,
         "视觉贴合主题、非 AI 模板观感",
     ]
     try:
@@ -96,9 +101,12 @@ async def plan_checks(ctx: RunContext, requirement: str) -> list[str]:
         logger.warning("plan_checks 失败（%s），用默认核验项", exc)
         checks = list(defaults)
 
-    # 无论核验清单怎么生成，都确保「存储安全」这一项在列（防止生成物因存储不可用而卡死）。
+    # 无论核验清单怎么生成，都确保「存储安全」与「精准交互」这两项在列（防止生成物因存储不可用而卡死、
+    # 或出现「点哪不翻哪」的串位/杀动画问题）。
     if not any("localStorage" in c or "存储" in c for c in checks):
         checks.append(_STORAGE_SAFETY)
+    if not any("精准" in c or "就地" in c for c in checks):
+        checks.append(_PRECISE_INTERACTION)
     return checks[:8]
 
 

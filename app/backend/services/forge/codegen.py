@@ -98,6 +98,12 @@ def build_messages(requirement: str, current_html: str | None = None) -> list[di
         "- localStorage 是同步 API：用它的返回值直接初始化渲染，不要用 setTimeout/await 假装异步加载（那会让「加载中」卡住）；"
         "即便加载失败，错误提示也只作可关闭的提示条，绝不能挡住用户继续新增数据；\n"
         "- 有真实交互：能新增/编辑/删除/勾选等，不是静态展示页；\n"
+        "- 交互状态更新要「精准、就地」：列表/卡片/看板这类重复元素，用**稳定身份**"
+        "（数据下标 index 或唯一 id）定位目标，绝不拿「显示文本/名字」去 indexOf 匹配"
+        "（同名会串位、encodeURIComponent/decodeURIComponent 往返也易出错）；点哪个元素就只改那个元素"
+        "（加/删 class、改 textContent），不要每次交互都整块 innerHTML 重建列表——那会打乱顺序、"
+        "杀掉 CSS 过渡动画，造成「点了这张却像翻了别张」；事件绑定用事件委托（绑在容器上一次），"
+        "避免重建 DOM 后反复 rebind；\n"
         "- 只输出 HTML 文档本身，不要 markdown 围栏，不要任何解释性文字；\n"
         "- 保持精简：聚焦需求里的核心功能，不要堆无关功能、不要写成多文件工程，整体控制在一个单文件的合理长度内。\n\n"
     )
