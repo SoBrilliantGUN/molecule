@@ -12,9 +12,9 @@
                               ↓
               ① 程序侧骨架校验（side_effect_checks，零额度）
                               ↓
-              ② 换一个模型逐项核验（verify_html，跨家换脑）
+              ② 换一个模型逐项给布尔（verify_html，跨家换脑，只回有序布尔数组）
                               ↓
-              ③ 程序重算分 → 低于阈值则针对缺失项定向重生成（≤2 次）
+              ③ 程序对位重算分 → 核验项未全过（score < 1.0）则针对缺失项定向重生成（≤2 次）
 ```
 
 对应代码：`agent.py`（异步 run 入口 + 落库）、`forge_react.py`（LangGraph 图 + 三重校验 + checkpoint）、

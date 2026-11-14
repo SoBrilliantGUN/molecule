@@ -1,4 +1,5 @@
 from services.forge.verify import (
+    _recompute,
     _verifier_view,
     side_effect_checks,
     slop_checks,
@@ -101,6 +102,53 @@ def test_side_effect_protocol_relative_js():
 def test_side_effect_external_css():
     html = '<html><head><title>x</title><link href="https://cdn.com/x.css"></head><body></body></html>'
     assert any("外链 CSS" in v for v in side_effect_checks(html))
+
+
+# ---------- _recompute：核验模型返回布尔数组 → 程序对位重算分 ----------
+
+_ITEMS = ["完整可运行", "内联资源", "localStorage 持久化", "真实交互"]
+
+
+def test_recompute_ordered_list():
+    checked, missing, score = _recompute(_ITEMS, [True, True, False, True])
+    assert score == 0.75
+    assert missing == ["localStorage 持久化"]
+    assert checked["真实交互"] is True and checked["localStorage 持久化"] is False
+
+
+def test_recompute_all_pass():
+    checked, missing, score = _recompute(_ITEMS, [True, True, True, True])
+    assert score == 1.0
+    assert missing == []
+
+
+def test_recompute_coerces_string_bools():
+    checked, missing, score = _recompute(["a", "b"], ["true", "false"])
+    assert score == 0.5
+    assert missing == ["b"]
+
+
+def test_recompute_int_keyed_dict():
+    checked, missing, score = _recompute(["a", "b"], {"0": True, "1": False})
+    assert score == 0.5
+    assert missing == ["b"]
+
+
+def test_recompute_wrong_length_is_none():
+    assert _recompute(_ITEMS, [True, False]) is None
+    assert _recompute(_ITEMS, [True, False, True, False, True]) is None
+
+
+def test_recompute_text_keyed_dict_is_none():
+    assert _recompute(["a", "b"], {"a": True, "b": False}) is None
+
+
+def test_recompute_non_list_none():
+    assert _recompute(["a", "b"], "nonsense") is None
+
+
+def test_recompute_empty_items():
+    assert _recompute([], []) == ({}, [], 1.0)
 
 
 # ---------- _verifier_view ----------

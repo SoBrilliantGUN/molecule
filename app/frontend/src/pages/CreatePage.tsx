@@ -31,7 +31,7 @@ export default function CreatePage() {
   const [project, setProject] = useState<Project | null>(null);
   const [busy, setBusy] = useState(false);
   const [modify, setModify] = useState('');
-  // 核验未通过（score < 0.7）时后端仍返回当前结果，这里给用户一个可见的警示而非绿点完成。
+  // 核验未全部通过（score < 1.0，即任一核验项未过）时后端仍返回当前结果，这里给用户一个可见的警示而非绿点完成。
   const [verifyWarn, setVerifyWarn] = useState<{ score: number } | null>(null);
 
   // 赛马

@@ -36,7 +36,9 @@ from services.forge.verify import side_effect_checks, slop_checks, slop_p0_messa
 
 logger = logging.getLogger(__name__)
 
-VERIFY_PASS_SCORE = float(os.environ.get("VERIFY_PASS_SCORE", "0.7"))
+# 核验通过门槛：score = 已满足项 / 总项数。默认 1.0 表示「核验项全部通过才判定通过」，
+# 任一核验项不满足即算未过，回喂重生成。可经环境变量放宽（如 0.7 = 通过 70% 即可）。
+VERIFY_PASS_SCORE = float(os.environ.get("VERIFY_PASS_SCORE", "1.0"))
 REACT_MAX_RETRY = int(os.environ.get("REACT_MAX_RETRY", "2"))
 
 # short task: generate a compact verify checklist from the requirement in one tiny call

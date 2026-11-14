@@ -2,8 +2,8 @@
 
 单链路生成（forge_react.generate_verified）对模型的产出「不轻信」，采用三重校验：
   ① ``side_effect_checks`` — 程序侧的确定性骨架/结构校验（不消耗额度）；
-  ② ``verify_html`` — 换一个不同家的模型（LLM_VERIFY_MODEL）逐项核对 verify_items；
-  ③ 调用方按结果重算分，低于阈值则针对缺失项定向重生成。
+  ② ``verify_html`` — 换一个不同家的模型（LLM_VERIFY_MODEL）逐项给布尔，程序对位重算分；
+  ③ 低于阈值则针对缺失项定向重生成。
 
 ``side_effect_checks`` 只查骨架（doctype/html/head/title/body 闭合、外链 JS/CSS），
 外加一个确定性的 localStorage 持久化检查（有脚本却无 localStorage 即判违规）。
@@ -62,9 +62,10 @@ def side_effect_checks(html: str) -> list[str]:
 
 
 VERIFY_SYSTEM = (
-    "你是独立的验收评审。对照核验项（verify_items）检查生成的 HTML：逐项给出是否满足。\n"
-    "只输出 JSON：{\"checked\":{\"项原文\":true/false},\"missing\":[\"不满足的项\"],\"score\":0.0}。\n"
-    "score = 已满足项 / 总项数（0~1）。只根据 HTML 内容实判，不宽松放水。"
+    "你是独立的验收评审。下面会给你一组核验项（verify_items，按顺序编号列出）和一份生成的 HTML。\n"
+    "逐项判断 HTML 是否满足每条核验项，只输出 JSON：{\"checked\":[true, false, ...]}。\n"
+    "checked 是布尔数组，长度必须等于核验项数量，第 i 个元素对应第 i 条核验项（按列出顺序）。\n"
+    "只根据 HTML 内容实判，不宽松放水；不要输出核验项原文、分数或解释。"
 )
 
 
@@ -81,8 +82,59 @@ def _verifier_view(html: str, head: int = 20000, tail: int = 20000) -> str:
     return h[:head] + "\n<!-- …中间部分已省略（为控制核验长度）… -->\n" + h[-tail:]
 
 
+def _coerce_bool(v) -> bool | None:
+    """把模型返回的单个值归一化成布尔；无法确定时返回 None（判核验不可用）。"""
+    if v is True or v is False:
+        return v
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "1"):
+            return True
+        if s in ("false", "0"):
+            return False
+    if isinstance(v, (int, float)) and v in (0, 1):
+        return bool(v)
+    return None
+
+
+def _recompute(items: list[str], checked_raw) -> tuple[dict, list[str], float] | None:
+    """程序侧重算分：把模型返回的 ordered 布尔数组对位到核验项。
+
+    返回 ``(checked_map, missing, score)``。模型输出无法对位（长度不符 / 类型非布尔）时返回
+    ``None``，调用方按「核验不可用」fail-closed——绝不把对不上的项当「通过」或「不通过」去猜。
+    """
+    n = len(items)
+    if not n:
+        return {}, [], 1.0
+    if isinstance(checked_raw, list):
+        vals = checked_raw
+    elif isinstance(checked_raw, dict):
+        # 模型偶尔回 {序号: bool}；按 0..n-1 顺序取。文本 key 无法确定顺序 → 判不可用。
+        if not all(str(k).strip().isdigit() for k in checked_raw):
+            return None
+        vals = [checked_raw.get(str(i), checked_raw.get(i)) for i in range(n)]
+    else:
+        return None
+    if len(vals) != n:
+        return None
+    bools: list[bool] = []
+    for v in vals:
+        b = _coerce_bool(v)
+        if b is None:
+            return None
+        bools.append(b)
+    checked = {it: b for it, b in zip(items, bools)}
+    missing = [it for it, b in zip(items, bools) if not b]
+    score = round(sum(bools) / n, 2)
+    return checked, missing, score
+
+
 async def verify_html(ctx: RunContext, verify_items: list[str], html: str) -> dict:
-    """A *different* model checks each verify_item against the HTML → score."""
+    """A *different* model judges each verify_item → 程序按返回的布尔数组对位重算分。
+
+    不再让模型自报 score / missing（防自说自话），只让它逐项给布尔；score 与 missing 由
+    程序从布尔数组确定性推导。模型输出无法对位时按「核验不可用」fail-closed。
+    """
     if not verify_items:
         return {"checked": {}, "missing": [], "score": 1.0}
     try:
@@ -90,7 +142,7 @@ async def verify_html(ctx: RunContext, verify_items: list[str], html: str) -> di
             ctx,
             [
                 {"role": "system", "content": VERIFY_SYSTEM},
-                {"role": "user", "content": "核验项：\n" + "\n".join(f"- {v}" for v in verify_items) + "\n\nHTML：\n" + _verifier_view(html)},
+                {"role": "user", "content": "核验项（按顺序）：\n" + "\n".join(f"{i + 1}. {v}" for i, v in enumerate(verify_items)) + "\n\nHTML：\n" + _verifier_view(html)},
             ],
             purpose="verify",
             model=VERIFY_MODEL,
@@ -99,17 +151,13 @@ async def verify_html(ctx: RunContext, verify_items: list[str], html: str) -> di
             provider="siliconflow",
         )
         data = extract_json(result.content)
-        checked = data.get("checked") or {}
-        missing = [str(m) for m in (data.get("missing") or [])]
-        score = float(data.get("score", 0.0))
-        # 程序校验：以 checked 的布尔值为准重算分（防御模型自说自话）
-        items = list(verify_items)
-        passed = sum(1 for it in items if checked.get(it) is True)
-        recompute = passed / len(items) if items else 1.0
-        score = min(max(recompute, 0.0), 1.0)
-        if not missing:
-            missing = [it for it in items if checked.get(it) is not True]
-        return {"checked": checked, "missing": missing, "score": round(score, 2)}
+        checked_raw = data.get("checked") if isinstance(data, dict) else data
+        recomputed = _recompute(list(verify_items), checked_raw)
+        if recomputed is None:
+            logger.warning("verify_html：核验模型输出无法对位（长度/类型不符），按核验不可用处理")
+            return {"checked": {}, "missing": ["核验模型输出无法对位，本次未执行有效核验"], "score": 0.0, "degraded": True}
+        checked, missing, score = recomputed
+        return {"checked": checked, "missing": missing, "score": score}
     except Exception as exc:  # noqa: BLE001 - verifier failure must fail CLOSED, never fake a pass
         # 核验模型不可用是「没查」，不是「通过」。fail-open 到 score=1.0 会让三重校验
         # 在最需要兜底的时刻静默放行。这里 fail-closed：记 degraded、按不通过返回，
