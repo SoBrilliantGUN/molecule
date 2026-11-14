@@ -124,6 +124,17 @@ export default function Home() {
     }
   };
 
+  const removeRace = async (e: MouseEvent<HTMLButtonElement>, id: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await forge.deleteRace(id);
+      reload();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
   const openExample = (ex: { name: string; prompt: string }) => {
     // 示例点击只把提示词填进输入框，由用户点「生成应用」再生成（不直接打开应用）。
     setPrompt(ex.prompt);
@@ -358,7 +369,16 @@ export default function Home() {
                   }}
                   className="group rounded-xl border border-border p-4 transition-colors hover:border-primary"
                 >
-                  <div className="line-clamp-2 font-semibold" title={r.prompt}>{r.prompt}</div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="line-clamp-2 font-semibold" title={r.prompt}>{r.prompt}</div>
+                    <button
+                      onClick={(e) => void removeRace(e, r.id)}
+                      aria-label={`删除赛马 ${r.prompt}`}
+                      className="rounded p-1.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                   <div className="mt-2 flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">
                       {r.status === 'running' ? '生成中…' : `${done} 个方案可选`}

@@ -240,3 +240,14 @@ async def select_race(race_id: int, body: SelectBody) -> dict:
         return _project_row(await extras.select_race(race_id, body.model))
     except DomainError as exc:
         raise _err(exc) from exc
+
+
+@router.delete("/races/{race_id}")
+async def delete_race(race_id: int) -> dict:
+    """删除一场赛马记录（连同其 SSE 事件流）；不动「选择方案」已落库的项目（项目有独立删除入口）。"""
+    row = await repo.get(Races, race_id)
+    if not row:
+        raise HTTPException(404, "对比任务不存在")
+    await repo.remove(AgentRuns, AgentRuns.run_key == f"race-{race_id}")
+    await repo.remove(Races, Races.id == race_id)
+    return {"ok": True}
